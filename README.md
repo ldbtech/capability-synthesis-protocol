@@ -102,8 +102,27 @@ The same `Orchestrator` can be driven however you need — CSP keeps its core
 | `async for ev in app.submit(goal, ambient=…)` | Plan + execute, **streaming** event dicts (FastAPI/SSE, live UIs). |
 | `await app.run_goal(goal, ambient=…)` | Headless **one-shot** → final result dict (scripts, adapters). |
 | `await app.call_capability(name, **args)` | **Direct** call of one capability — no planner. CSP's `tools/call`. |
+| `async with app.borrow(name) as cap:` | **Borrow** an existing capability (Rust-like) — never synthesizes. |
 | `await app.list_capabilities()` | All capabilities (registered + synthesized, with generated code). |
-| `await app.forget(name)` | Drop a synthesized capability so it regenerates (self-correcting retries). |
+| `await app.forget(name)` | Drop a synthesized capability so it regenerates (blocked while borrowed). |
+
+### Borrowing (reuse, the Rust way)
+
+Synthesis *creates* a capability; **borrowing takes a shared, read-only handle
+to one that already exists** — it never creates a duplicate. Like `&T` in Rust:
+
+```python
+async with app.borrow("detect_anomalies") as cap:   # KeyError if it doesn't exist
+    result = await cap.invoke(rows=rows)             # read-only handle
+    # while borrowed, app.forget("detect_anomalies") raises BorrowError
+```
+
+- Borrowing a capability that doesn't exist **raises** (never silently
+  synthesizes a new one).
+- Many services can hold **shared** borrows of the same capability at once.
+- A capability **cannot be forgotten or replaced while it's borrowed** — the
+  registry enforces it, like Rust won't free a value that's still borrowed.
+- Borrows are **scoped**: released automatically at the end of the `async with`.
 
 `ambient` is a dict (e.g. `{"rows": [...], "columns": [...]}`) merged into every
 step's args, so synthesized code can compute over your data.

@@ -71,6 +71,17 @@ async def capabilities():
     return {"capabilities": await csp.list_capabilities()}
 
 
+@api.post("/api/describe")
+async def describe():
+    """
+    Borrow the existing `describe_dataset` capability and invoke it directly —
+    no planner, no LLM. Demonstrates CSP's Rust-like borrowing: we reuse a
+    capability that already exists instead of routing a goal through the planner.
+    """
+    async with csp.borrow("describe_dataset") as cap:
+        return {"borrowed": cap.name, "result": await cap.invoke()}
+
+
 @api.post("/api/chat")
 async def chat(req: ChatRequest):
     """Stream CSP execution events to the browser as Server-Sent Events."""

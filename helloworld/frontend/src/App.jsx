@@ -38,6 +38,15 @@ export default function App() {
     setMessages((m) => [...m, { role: "system", text }]);
   }
 
+  async function describe() {
+    // Borrows the existing describe_dataset capability directly (no planner).
+    const r = await fetch(`${API}/describe`, { method: "POST" }).then((r) => r.json());
+    const res = r.result || {};
+    pushSystem(
+      `🔗 Borrowed "${r.borrowed}" → ${res.row_count} rows, columns: ${(res.columns || []).join(", ")}`
+    );
+  }
+
   async function send() {
     const text = input.trim();
     if (!text || busy) return;
@@ -128,6 +137,9 @@ export default function App() {
               <div className="chips">
                 {dataset.columns.map((c) => <span key={c} className="chip">{c}</span>)}
               </div>
+              <button className="borrow-btn" onClick={describe}>
+                🔗 Describe (borrows capability)
+              </button>
             </div>
           ) : <p className="muted">No CSV loaded yet.</p>}
         </section>

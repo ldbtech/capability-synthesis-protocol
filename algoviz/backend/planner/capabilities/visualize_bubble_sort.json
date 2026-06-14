@@ -1,0 +1,60 @@
+{
+  "name": "visualize_bubble_sort",
+  "description": "Executes bubble sort step-by-step and renders each comparison and swap as an animation frame.",
+  "version": "1.0.0",
+  "synthesized_at": 1781404590.800228,
+  "id": "56736269-b20b-410b-8754-650f78550bc8",
+  "spec": {
+    "jsonrpc": "2.0",
+    "method": "csp.capability.invoke",
+    "params": {
+      "capability_id": "visualize_bubble_sort",
+      "version": "1.0.0",
+      "description": "Executes bubble sort step-by-step and renders each comparison and swap as an animation frame.",
+      "kind": "synthesized",
+      "params_schema": {
+        "data": {
+          "type": "array",
+          "description": "List of numbers to sort (8 items typical, e.g. [64, 34, 25, 12, 22, 11, 90, 88])",
+          "required": false
+        }
+      },
+      "result_schema": {
+        "frames": {
+          "type": "array",
+          "description": "List of base64-encoded PNG images showing each step of the bubble sort"
+        },
+        "step_count": {
+          "type": "number",
+          "description": "Total number of frames rendered"
+        },
+        "algorithm": {
+          "type": "string",
+          "description": "Name of the algorithm (Bubble Sort)"
+        },
+        "input": {
+          "type": "array",
+          "description": "The input array that was sorted"
+        },
+        "explanation_hint": {
+          "type": "string",
+          "description": "Legend explaining the color coding in the visualization"
+        }
+      },
+      "execution": {
+        "target": "python",
+        "transport": "stdio",
+        "entrypoint": "run",
+        "code": "def run(args):\n    import matplotlib.pyplot as plt\n    import matplotlib.patches as mpatches\n    import io\n    import base64\n    \n    # Read input or create default\n    data = args.get('data', [64, 34, 25, 12, 22, 11, 90, 88])\n    if not data:\n        data = [64, 34, 25, 12, 22, 11, 90, 88]\n    \n    data = list(data)  # ensure it's a list\n    n = len(data)\n    frames = []\n    step_count = 0\n    \n    # Capture initial state\n    def capture_frame(arr, title, compared_indices=None, swapped_indices=None, sorted_indices=None):\n        \"\"\"Render current array state as a bar chart.\"\"\"\n        fig, ax = plt.subplots(figsize=(7, 4), dpi=100)\n        \n        colors = ['lightblue'] * len(arr)\n        \n        # Mark sorted region in green\n        if sorted_indices:\n            for i in sorted_indices:\n                colors[i] = 'lightgreen'\n        \n        # Mark compared indices in orange\n        if compared_indices:\n            for i in compared_indices:\n                colors[i] = 'orange'\n        \n        # Mark swapped indices in red\n        if swapped_indices:\n            for i in swapped_indices:\n                colors[i] = 'red'\n        \n        bars = ax.bar(range(len(arr)), arr, color=colors, edgecolor='black', linewidth=1.5)\n        ax.set_ylim(0, max(data) * 1.1)\n        ax.set_xlabel('Index')\n        ax.set_ylabel('Value')\n        ax.set_title(title)\n        ax.set_xticks(range(len(arr)))\n        \n        # Add legend\n        legend_elements = [\n            mpatches.Patch(facecolor='lightblue', edgecolor='black', label='Unsorted'),\n            mpatches.Patch(facecolor='orange', edgecolor='black', label='Comparing'),\n            mpatches.Patch(facecolor='red', edgecolor='black', label='Swapping'),\n            mpatches.Patch(facecolor='lightgreen', edgecolor='black', label='Sorted'),\n        ]\n        ax.legend(handles=legend_elements, loc='upper right', fontsize=8)\n        \n        # Save to base64\n        buf = io.BytesIO()\n        fig.savefig(buf, format='png', bbox_inches='tight')\n        buf.seek(0)\n        img_base64 = base64.b64encode(buf.read()).decode('utf-8')\n        frames.append(img_base64)\n        plt.close(fig)\n        \n        return len(frames)\n    \n    # Initial frame\n    step_count = capture_frame(data, f'Bubble Sort: Initial Array', sorted_indices=[])\n    \n    # Bubble sort with step-by-step capture\n    for i in range(n):\n        swapped = False\n        sorted_region = list(range(n - i, n))  # rightmost i elements are sorted\n        \n        for j in range(n - i - 1):\n            # Capture comparison\n            step_count = capture_frame(\n                data,\n                f'Bubble Sort: Pass {i+1}, Comparing indices {j} and {j+1}',\n                compared_indices=[j, j+1],\n                sorted_indices=sorted_region\n            )\n            \n            # Perform comparison and swap\n            if data[j] > data[j+1]:\n                data[j], data[j+1] = data[j+1], data[j]\n                swapped = True\n                \n                # Capture swap\n                step_count = capture_frame(\n                    data,\n                    f'Bubble Sort: Pass {i+1}, Swapped indices {j} and {j+1}',\n                    swapped_indices=[j, j+1],\n                    sorted_indices=sorted_region\n                )\n        \n        # Update sorted region after each pass\n        sorted_region = list(range(n - i - 1, n))\n        step_count = capture_frame(\n            data,\n            f'Bubble Sort: Pass {i+1} Complete',\n            sorted_indices=sorted_region\n        )\n        \n        if not swapped:\n            break\n    \n    # Final frame\n    step_count = capture_frame(\n        data,\n        'Bubble Sort: Complete!',\n        sorted_indices=list(range(n))\n    )\n    \n    return {\n        'frames': frames,\n        'step_count': step_count,\n        'algorithm': 'Bubble Sort',\n        'input': list(args.get('data', [64, 34, 25, 12, 22, 11, 90, 88])),\n        'explanation_hint': 'Blue=unsorted, Orange=comparing, Red=swapping, Green=sorted region'\n    }",
+        "steps": [
+          "Read input array from args['data'] or use default [64, 34, 25, 12, 22, 11, 90, 88]",
+          "Render initial array state as bar chart",
+          "For each pass: compare adjacent pairs, capture comparison frame, swap if needed, capture swap frame",
+          "Mark compared indices in orange, swapped in red, sorted region in green",
+          "Continue until array is fully sorted or no swaps occur",
+          "Return all frames as base64-encoded PNGs with metadata"
+        ]
+      }
+    }
+  }
+}

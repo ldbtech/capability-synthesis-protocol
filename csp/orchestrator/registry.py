@@ -25,6 +25,7 @@ import asyncio
 import logging
 from typing import Callable, Optional
 
+from .borrow import BorrowError
 from .capability import (
     AnyCapability,
     CapabilityKind,
@@ -45,12 +46,14 @@ class CapabilityRegistry:
         cap = await registry.resolve("predict_churn")
     """
 
-    __slots__ = ("_registered", "_synthesized", "_lock", "persist_hook")
+    __slots__ = ("_registered", "_synthesized", "_lock", "persist_hook", "_borrows")
 
     def __init__(self) -> None:
         self._registered:  dict[str, RegisteredCapability]  = {}
         self._synthesized: dict[str, SynthesizedCapability] = {}
         self._lock = asyncio.Lock()
+        # Active borrow counts per capability name (Rust-like shared borrows).
+        self._borrows: dict[str, int] = {}
         # Optional callback invoked when a capability is synthesized at runtime.
         # The orchestrator sets this to persist specs into planner/capabilities/.
         self.persist_hook: Optional[Callable[[SynthesizedCapability], None]] = None
@@ -118,12 +121,52 @@ class CapabilityRegistry:
         Drop a synthesized capability so it can be regenerated. Used to recover
         from a bad synthesis (e.g. code that ran but produced a wrong result).
         Returns True if something was removed.
+
+        Refuses (BorrowError) if the capability is currently borrowed — you
+        cannot free a value that's still borrowed.
         """
         async with self._lock:
+            n = self._borrows.get(name, 0)
+            if n > 0:
+                raise BorrowError(
+                    f"cannot forget {name!r}: {n} active borrow(s). "
+                    "Release the borrow(s) first."
+                )
             removed = self._synthesized.pop(name, None) is not None
         if removed:
             log.debug("forgot synthesized capability %r", name)
         return removed
+
+    # ------------------------------------------------------------------
+    # Borrowing — Rust-like shared, read-only handles to existing capabilities
+    # ------------------------------------------------------------------
+
+    async def acquire_borrow(self, name: str) -> AnyCapability:
+        """
+        Acquire a shared borrow on an EXISTING capability. Raises KeyError if it
+        doesn't exist — borrowing never synthesizes. Increments the borrow count.
+        """
+        cap = await self.resolve(name)
+        if cap is None:
+            raise KeyError(f"cannot borrow unknown capability: {name!r}")
+        async with self._lock:
+            self._borrows[name] = self._borrows.get(name, 0) + 1
+        log.debug("borrow acquired %r (now %d)", name, self._borrows[name])
+        return cap
+
+    async def release_borrow(self, name: str) -> None:
+        """Release one shared borrow."""
+        async with self._lock:
+            n = self._borrows.get(name, 0)
+            if n <= 1:
+                self._borrows.pop(name, None)
+            else:
+                self._borrows[name] = n - 1
+        log.debug("borrow released %r", name)
+
+    def borrow_count(self, name: str) -> int:
+        """How many borrows are currently live for this capability."""
+        return self._borrows.get(name, 0)
 
     def exists(self, name: str) -> bool:
         """Synchronous existence check — safe to call from planner."""

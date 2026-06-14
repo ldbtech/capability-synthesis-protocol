@@ -37,6 +37,7 @@ import sys
 from typing import Any, Optional
 
 from ..llm.base import BaseLLM
+from .borrow import BorrowScope
 from .capability import AnyCapability, RegisteredCapability, capability_from_function
 from .elicitation import ElicitationManager
 from .executor import Executor
@@ -255,31 +256,42 @@ class Orchestrator:
                 final = {k: v for k, v in ev.items() if k != "type"}
         return final
 
+    async def _invoke_resolved(self, cap: AnyCapability, args: dict[str, Any]) -> Any:
+        """Run an already-resolved capability (registered fn or sandboxed code)."""
+        if isinstance(cap, RegisteredCapability):
+            return await cap.invoke(**args)
+        if not cap.code:
+            raise RuntimeError(f"synthesized capability {cap.name!r} has no executable code")
+        sb = await self._sandbox.run(cap.code, args, entrypoint=cap.entrypoint)
+        if not sb.ok:
+            raise RuntimeError(f"capability {cap.name!r} failed: {sb.error}")
+        return sb.result
+
+    def borrow(self, name: str) -> BorrowScope:
+        """
+        Borrow an EXISTING capability (Rust-like). Returns an async context
+        manager yielding a read-only, invokable handle. Borrowing never
+        synthesizes — it raises KeyError if the capability doesn't exist. While
+        a borrow is live, the capability cannot be forgotten/replaced.
+
+            async with app.borrow("detect_anomalies") as cap:
+                result = await cap.invoke(rows=rows)
+
+        Many services can hold shared borrows of the same capability at once.
+        """
+        return BorrowScope(self._registry, name, self._invoke_resolved)
+
     async def call_capability(self, name: str, **args: Any) -> Any:
         """
         Invoke a single capability directly by name — no planner, no LLM.
 
-        This is the direct-call counterpart to submit()/run_goal(): when you
-        already know which capability you want (e.g. a LangGraph node calling a
-        registered capability), call it straight. Mirrors MCP's `tools/call`.
-
-        Works for both registered (Python function) and synthesized (sandboxed
-        code) capabilities. Raises KeyError if the capability doesn't exist.
+        Counterpart to submit()/run_goal(): when you already know which
+        capability you want, call it straight. Mirrors MCP's `tools/call`.
+        Internally borrows the capability for the duration of the call, so it
+        can't be forgotten mid-invocation. Raises KeyError if it doesn't exist.
         """
-        cap = await self._registry.resolve(name)
-        if cap is None:
-            raise KeyError(f"capability not found: {name!r}")
-
-        if isinstance(cap, RegisteredCapability):
+        async with self.borrow(name) as cap:
             return await cap.invoke(**args)
-
-        # Synthesized — run its generated code in the sandbox.
-        if not cap.code:
-            raise RuntimeError(f"synthesized capability {name!r} has no executable code")
-        sb = await self._sandbox.run(cap.code, args, entrypoint=cap.entrypoint)
-        if not sb.ok:
-            raise RuntimeError(f"capability {name!r} failed: {sb.error}")
-        return sb.result
 
     async def forget(self, name: str) -> bool:
         """

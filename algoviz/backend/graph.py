@@ -86,9 +86,38 @@ _MAX_ATTEMPTS = 3
 async def build(state: VizState) -> VizState:
     await emit({"type": "node", "node": "build", "status": "running"})
 
-    ambient = {"data": state.get("sample_input")} if state.get("sample_input") is not None else {}
+    sample_input = state.get("sample_input")
+    ambient = {"data": sample_input} if sample_input is not None else {}
     cap_name, code, frames, step_count = "", "", [], 0
 
+    # ── Fast path: BORROW an existing visualizer (Rust-like reuse) ────────────
+    # If we already synthesized this algorithm before, don't plan or synthesize
+    # again — borrow the existing capability and invoke it directly.
+    wanted = f"visualize_{state.get('algorithm', '')}"
+    existing = {c["name"]: c for c in await csp.list_capabilities()}
+    if wanted in existing and existing[wanted].get("kind") == "synthesized":
+        await emit({"type": "csp", "kind": "borrow",
+                    "message": f"Borrowing existing {wanted} — no synthesis needed"})
+        try:
+            async with csp.borrow(wanted) as cap:
+                result = await cap.invoke(data=sample_input)
+            if isinstance(result, dict) and result.get("frames"):
+                frames = result["frames"]
+                step_count = result.get("step_count", len(frames))
+                cap_name = wanted
+                code = existing[wanted].get("code", "")
+                await emit({"type": "code", "capability": cap_name, "code": code, "borrowed": True})
+                await emit({"type": "node", "node": "build", "status": "done",
+                            "detail": f"borrowed {wanted}: {len(frames)} frames"})
+                return {"frames": frames, "step_count": step_count,
+                        "capability": cap_name, "code": code, "status": "ok"}
+        except Exception as exc:
+            # Borrow/invoke failed → fall through to a fresh synthesis.
+            await emit({"type": "csp", "kind": "log",
+                        "message": f"borrowed capability failed ({exc}); re-synthesizing"})
+            await csp.forget(wanted)
+
+    # ── Otherwise: synthesize a new visualizer (self-correcting) ─────────────
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         if attempt > 1:
             await emit({"type": "csp", "kind": "retry",
@@ -123,7 +152,7 @@ async def build(state: VizState) -> VizState:
 
         if frames:
             if code:
-                await emit({"type": "code", "capability": cap_name, "code": code})
+                await emit({"type": "code", "capability": cap_name, "code": code, "borrowed": False})
             break
 
         # Failed: forget the bad capability so the next attempt regenerates it.

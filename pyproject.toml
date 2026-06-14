@@ -40,10 +40,21 @@ langgraph = [
 
 [project.urls]
 Homepage = "https://github.com/ldbtech/csp"
+Repository = "https://github.com/ldbtech/csp"
 Issues = "https://github.com/ldbtech/csp/issues"
 
+# Only the importable library ships in the distributions — the demo apps
+# (helloworld/, algoviz/), tests, and examples are excluded.
 [tool.hatch.build.targets.wheel]
 packages = ["csp"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "csp",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

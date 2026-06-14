@@ -1,0 +1,57 @@
+{
+  "name": "correlation_heatmap",
+  "description": "Generate a correlation heatmap visualization from numeric columns in the dataset.",
+  "version": "1.0.0",
+  "synthesized_at": 1781401127.773144,
+  "id": "cfeaed65-f2e1-464b-8946-a1f6443cdabd",
+  "spec": {
+    "jsonrpc": "2.0",
+    "method": "csp.capability.invoke",
+    "params": {
+      "capability_id": "correlation_heatmap",
+      "version": "1.0.0",
+      "description": "Generate a correlation heatmap visualization from numeric columns in the dataset.",
+      "kind": "synthesized",
+      "params_schema": {
+        "rows": {
+          "type": "array",
+          "description": "List of data rows (dicts)",
+          "required": false
+        },
+        "columns": {
+          "type": "array",
+          "description": "List of column names",
+          "required": false
+        }
+      },
+      "result_schema": {
+        "image_base64": {
+          "type": "string",
+          "description": "PNG image encoded as base64"
+        },
+        "numeric_columns": {
+          "type": "array",
+          "description": "List of numeric columns used"
+        },
+        "correlation_matrix": {
+          "type": "array",
+          "description": "2D correlation matrix as nested list"
+        }
+      },
+      "execution": {
+        "target": "python",
+        "transport": "stdio",
+        "entrypoint": "run",
+        "code": "import io\nimport base64\nimport matplotlib.pyplot as plt\nimport numpy as np\nfrom collections import defaultdict\n\ndef run(args):\n    rows = args.get('rows', [])\n    columns = args.get('columns', [])\n    \n    if not rows or not columns:\n        return {'error': 'No data provided', 'image_base64': None}\n    \n    # Extract numeric columns and build a numeric data matrix\n    numeric_data = defaultdict(list)\n    \n    for row in rows:\n        for col in columns:\n            val = row.get(col, None)\n            if val is None or val == '':\n                numeric_data[col].append(np.nan)\n            else:\n                # Try to parse as float, handling common formats\n                try:\n                    # Remove common non-numeric characters\n                    cleaned = str(val).strip()\n                    cleaned = cleaned.replace('$', '').replace(',', '').replace('kms', '').replace('%', '').strip()\n                    numeric_data[col].append(float(cleaned))\n                except (ValueError, TypeError):\n                    numeric_data[col].append(np.nan)\n    \n    # Filter to only columns with at least some numeric data\n    numeric_cols = [col for col in columns if col in numeric_data and not all(np.isnan(numeric_data[col]))]\n    \n    if len(numeric_cols) < 2:\n        return {'error': 'Need at least 2 numeric columns for correlation', 'image_base64': None}\n    \n    # Build correlation matrix\n    data_matrix = np.array([numeric_data[col] for col in numeric_cols]).T\n    \n    # Calculate correlation, ignoring NaN values\n    corr_matrix = np.corrcoef(data_matrix, rowvar=False)\n    \n    # Create heatmap\n    fig, ax = plt.subplots(figsize=(10, 8))\n    \n    im = ax.imshow(corr_matrix, cmap='coolwarm', aspect='auto', vmin=-1, vmax=1)\n    \n    # Set ticks and labels\n    ax.set_xticks(np.arange(len(numeric_cols)))\n    ax.set_yticks(np.arange(len(numeric_cols)))\n    ax.set_xticklabels(numeric_cols, rotation=45, ha='right')\n    ax.set_yticklabels(numeric_cols)\n    \n    # Add correlation values as text\n    for i in range(len(numeric_cols)):\n        for j in range(len(numeric_cols)):\n            text = ax.text(j, i, f'{corr_matrix[i, j]:.2f}',\n                          ha=\"center\", va=\"center\", color=\"black\", fontsize=9)\n    \n    ax.set_title('Correlation Heatmap', fontsize=14, fontweight='bold')\n    fig.colorbar(im, ax=ax, label='Correlation Coefficient')\n    plt.tight_layout()\n    \n    # Save to base64\n    buf = io.BytesIO()\n    plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')\n    buf.seek(0)\n    image_base64 = base64.b64encode(buf.read()).decode('utf-8')\n    plt.close(fig)\n    \n    return {\n        'image_base64': image_base64,\n        'numeric_columns': numeric_cols,\n        'correlation_matrix': corr_matrix.tolist()\n    }",
+        "steps": [
+          "Extract numeric values from all columns, cleaning currency/units/commas",
+          "Filter to columns with sufficient numeric data",
+          "Calculate Pearson correlation matrix",
+          "Render heatmap with color scale from -1 to 1",
+          "Annotate cells with correlation coefficients",
+          "Encode PNG to base64 and return"
+        ]
+      }
+    }
+  }
+}

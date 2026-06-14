@@ -134,6 +134,71 @@ async def test_forget_removes_synthesized():
     assert removed and not app._registry.exists("x")
 
 
+# ── Borrowing — Rust-like shared, read-only handles ───────────────────────────
+async def _app_with_synth(name="viz"):
+    """An orchestrator with one registered + one synthesized capability."""
+    from csp.orchestrator.capability import SynthesizedCapability
+    app = Orchestrator("t", llm=FakeLLM(), planner_dir=None)
+
+    @app.capability("add")
+    async def add(a: int, b: int) -> dict:
+        return {"sum": a + b}
+
+    spec = {"jsonrpc": "2.0", "method": "csp.capability.invoke",
+            "params": {"capability_id": name, "execution":
+                       {"target": "python", "entrypoint": "run",
+                        "code": "def run(args):\n    return {'n': args.get('n', 0) * 2}"}}}
+    app._registry._synthesized[name] = SynthesizedCapability(name=name, spec=spec)
+    return app
+
+
+async def test_borrow_invokes_existing():
+    app = await _app_with_synth()
+    async with app.borrow("add") as cap:
+        assert cap.kind == "registered"
+        assert await cap.invoke(a=2, b=5) == {"sum": 7}
+    # released after the scope
+    assert app._registry.borrow_count("add") == 0
+
+
+async def test_borrow_unknown_raises_not_synthesizes():
+    app = Orchestrator("t", llm=FakeLLM(), planner_dir=None)
+    with pytest.raises(KeyError):
+        async with app.borrow("does_not_exist"):
+            pass
+
+
+async def test_cannot_forget_while_borrowed():
+    from csp import BorrowError
+    app = await _app_with_synth("viz")
+    async with app.borrow("viz") as cap:
+        assert app._registry.borrow_count("viz") == 1
+        with pytest.raises(BorrowError):
+            await app.forget("viz")          # borrowed → refused
+        assert await cap.invoke(n=3) == {"n": 6}
+    # once released, forgetting works
+    assert await app.forget("viz") is True
+
+
+async def test_multiple_shared_borrows():
+    app = await _app_with_synth("viz")
+    async with app.borrow("viz"):
+        async with app.borrow("viz"):
+            assert app._registry.borrow_count("viz") == 2
+        assert app._registry.borrow_count("viz") == 1
+    assert app._registry.borrow_count("viz") == 0
+
+
+async def test_released_handle_cannot_invoke():
+    from csp import BorrowError
+    app = await _app_with_synth()
+    scope = app.borrow("add")
+    cap = await scope.acquire()
+    await scope.release()
+    with pytest.raises(BorrowError):
+        await cap.invoke(a=1, b=1)
+
+
 # ── PlannerStore: persistence round-trips synthesized capabilities ────────────
 def test_planner_store_roundtrip(tmp_path):
     from csp.orchestrator.capability import SynthesizedCapability

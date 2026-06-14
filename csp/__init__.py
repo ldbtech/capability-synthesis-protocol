@@ -24,12 +24,15 @@ Server pattern (what a developer writes):
 
 from .orchestrator.server import Orchestrator
 from .orchestrator.executor import ElicitRequired
+from .orchestrator.borrow import BorrowError, BorrowedCapability
 from .llm.anthropic import AnthropicLLM
 from .llm.base import BaseLLM, LLMMessage, LLMResponse
 
 __all__ = [
     "Orchestrator",
     "ElicitRequired",
+    "BorrowError",
+    "BorrowedCapability",
     "AnthropicLLM",
     "BaseLLM",
     "LLMMessage",

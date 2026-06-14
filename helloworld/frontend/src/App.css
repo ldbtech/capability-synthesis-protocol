@@ -53,6 +53,12 @@ body {
   padding: 2px 8px; border-radius: 20px; font-size: 11px; color: var(--muted);
 }
 .muted { color: var(--muted); font-size: 13px; }
+.borrow-btn {
+  margin-top: 10px; width: 100%; cursor: pointer;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
+  border-radius: 9px; padding: 8px; font-size: 12.5px; font-weight: 600;
+}
+.borrow-btn:hover { border-color: var(--accent); }
 
 .cap { border: 1px solid var(--line); border-radius: 9px; margin-bottom: 8px; background: #11151d; }
 .cap summary {

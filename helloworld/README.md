@@ -73,3 +73,8 @@ Open http://localhost:5173, upload `sample_data/employees.csv`, and try:
 
 After a synthesized question, open the capability in the sidebar to read the
 generated Python, or look in `backend/planner/capabilities/`.
+
+**Borrowing:** the **🔗 Describe (borrows capability)** button calls
+`POST /api/describe`, which does `async with csp.borrow("describe_dataset")` and
+invokes it directly — reusing the existing capability with no planner/LLM, the
+Rust-like borrow path.

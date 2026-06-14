@@ -18,6 +18,7 @@ export default function App() {
   const [log, setLog] = useState([]);
   const [code, setCode] = useState(null);
   const [capability, setCapability] = useState(null);
+  const [borrowed, setBorrowed] = useState(false);
   const [frames, setFrames] = useState([]);
   const [narration, setNarration] = useState("");
   const [error, setError] = useState(null);
@@ -26,7 +27,7 @@ export default function App() {
     const goal = (req ?? input).trim();
     if (!goal || busy) return;
     setBusy(true);
-    setNodeStatus({}); setLog([]); setCode(null); setCapability(null);
+    setNodeStatus({}); setLog([]); setCode(null); setCapability(null); setBorrowed(false);
     setFrames([]); setNarration(""); setError(null);
 
     const pushLog = (line) => setLog((l) => [...l, line]);
@@ -68,12 +69,16 @@ export default function App() {
       case "csp":
         if (ev.kind === "plan") pushLog(`🧠 plan → ${ev.steps.join(", ")}`);
         else if (ev.kind === "retry") pushLog(`♻️ ${ev.message}`);
+        else if (ev.kind === "borrow") pushLog(`🔗 ${ev.message}`);
         else if (ev.kind === "log") pushLog(`   ${ev.message}`);
         break;
       case "code":
         setCapability(ev.capability);
         setCode(ev.code);
-        pushLog(`⚡ invented ${ev.capability} (${ev.code.length} chars of new code)`);
+        setBorrowed(!!ev.borrowed);
+        pushLog(ev.borrowed
+          ? `🔗 borrowed ${ev.capability} (reused, no synthesis)`
+          : `⚡ invented ${ev.capability} (${ev.code.length} chars of new code)`);
         break;
       case "narration":
         setNarration(ev.text);
@@ -152,7 +157,11 @@ export default function App() {
         {/* The WOW: freshly-written code */}
         <section className="panel code">
           <h3>
-            {capability ? <>⚡ Invented live: <code>{capability}</code></> : "Generated code"}
+            {capability
+              ? (borrowed
+                  ? <>🔗 Borrowed (reused): <code>{capability}</code></>
+                  : <>⚡ Invented live: <code>{capability}</code></>)
+              : "Generated code"}
           </h3>
           {code ? (
             <pre>{code}</pre>

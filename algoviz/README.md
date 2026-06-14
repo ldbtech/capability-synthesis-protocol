@@ -76,5 +76,8 @@ Different ports, so both apps run at once:
 `visualize quicksort` · `merge sort` · `animate binary search` ·
 `show BFS on a graph` · `selection sort` · `Dijkstra shortest path`
 
-Ask the same algorithm twice — the second time CSP reuses the capability it
-already wrote (see `backend/planner/capabilities/`), so it's instant.
+Ask the same algorithm twice — the second time the `build` node **borrows** the
+existing `visualize_<algo>` capability (`csp.borrow(...)`) and invokes it
+directly: no planner, no LLM, no synthesis. The UI shows
+**🔗 Borrowed (reused)** instead of **⚡ Invented live**, and the synthesized
+source is in `backend/planner/capabilities/`.
