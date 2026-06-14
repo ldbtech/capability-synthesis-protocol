@@ -149,6 +149,15 @@ class PlannerStore:
         except Exception as exc:
             log.warning("failed to persist capability %r: %s", cap.name, exc)
 
+    def delete_capability(self, name: str) -> None:
+        """Remove a synthesized capability's persisted spec + source from disk."""
+        safe = _safe(name)
+        for path in (self.caps_dir / f"{safe}.json", self.caps_dir / f"{safe}.py"):
+            try:
+                path.unlink(missing_ok=True)
+            except Exception as exc:
+                log.warning("failed to delete %s: %s", path.name, exc)
+
     def load_capabilities(self) -> list[SynthesizedCapability]:
         """
         Reload previously synthesized capabilities from disk.

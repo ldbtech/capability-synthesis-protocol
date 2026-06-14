@@ -1,0 +1,59 @@
+{
+  "name": "visualize_quick_sort",
+  "description": "Executes quick sort step-by-step on an input array and renders each comparison, swap, and partition as an animation frame.",
+  "version": "1.0.0",
+  "synthesized_at": 1781399654.754672,
+  "id": "54a26508-8a3b-4fbc-9833-4f3c5ff03d9a",
+  "spec": {
+    "jsonrpc": "2.0",
+    "method": "csp.capability.invoke",
+    "params": {
+      "capability_id": "visualize_quick_sort",
+      "version": "1.0.0",
+      "description": "Executes quick sort step-by-step on an input array and renders each comparison, swap, and partition as an animation frame.",
+      "kind": "synthesized",
+      "params_schema": {
+        "data": {
+          "type": "array",
+          "description": "List of numbers to sort (e.g., [64, 34, 25, 12, 22, 11, 90, 88]). If absent, uses default 8-element list.",
+          "required": false
+        }
+      },
+      "result_schema": {
+        "frames": {
+          "type": "array",
+          "description": "List of base64-encoded PNG images, one per algorithm step."
+        },
+        "step_count": {
+          "type": "number",
+          "description": "Total number of steps captured and rendered."
+        },
+        "algorithm": {
+          "type": "string",
+          "description": "Name of the algorithm (Quick Sort)."
+        },
+        "input": {
+          "type": "array",
+          "description": "The input array that was sorted."
+        },
+        "explanation_hint": {
+          "type": "string",
+          "description": "Color legend: Blue=unsorted, Orange=compared, Red=swapped, Green=sorted."
+        }
+      },
+      "execution": {
+        "target": "python",
+        "transport": "stdio",
+        "entrypoint": "run",
+        "code": "def run(args):\n    import matplotlib.pyplot as plt\n    import matplotlib.patches as mpatches\n    import io\n    import base64\n    \n    # Read input or create default\n    data = args.get('data', [64, 34, 25, 12, 22, 11, 90, 88])\n    if not data:\n        data = [64, 34, 25, 12, 22, 11, 90, 88]\n    \n    data = list(data)  # ensure it's a list\n    frames = []\n    step_count = [0]  # mutable counter\n    \n    # Capture state: (array_copy, compared_indices, swapped_indices, sorted_indices, step_label)\n    states = []\n    \n    def capture_state(arr, compared=None, swapped=None, sorted_set=None, label=\"\"):\n        \"\"\"Record a snapshot of the array state.\"\"\"\n        compared = compared or []\n        swapped = swapped or []\n        sorted_set = sorted_set or set()\n        states.append({\n            'array': list(arr),\n            'compared': compared,\n            'swapped': swapped,\n            'sorted': sorted_set,\n            'label': label\n        })\n    \n    def partition(arr, low, high, states_list):\n        \"\"\"Partition for quicksort; capture states during partitioning.\"\"\"\n        pivot = arr[high]\n        i = low - 1\n        \n        for j in range(low, high):\n            # Capture comparison\n            states_list.append({\n                'array': list(arr),\n                'compared': [j, high],\n                'swapped': [],\n                'sorted': set(),\n                'label': f\"Compare arr[{j}]={arr[j]} with pivot={pivot}\"\n            })\n            \n            if arr[j] < pivot:\n                i += 1\n                # Capture swap\n                arr[i], arr[j] = arr[j], arr[i]\n                states_list.append({\n                    'array': list(arr),\n                    'compared': [],\n                    'swapped': [i, j],\n                    'sorted': set(),\n                    'label': f\"Swap arr[{i}] and arr[{j}]\"\n                })\n        \n        # Final pivot placement\n        arr[i + 1], arr[high] = arr[high], arr[i + 1]\n        states_list.append({\n            'array': list(arr),\n            'compared': [],\n            'swapped': [i + 1, high],\n            'sorted': set(),\n            'label': f\"Place pivot at index {i + 1}\"\n        })\n        \n        return i + 1\n    \n    def quicksort(arr, low, high, states_list):\n        \"\"\"Quicksort with state capture.\"\"\"\n        if low < high:\n            pi = partition(arr, low, high, states_list)\n            quicksort(arr, low, pi - 1, states_list)\n            quicksort(arr, pi + 1, high, states_list)\n    \n    # Initial state\n    states.append({\n        'array': list(data),\n        'compared': [],\n        'swapped': [],\n        'sorted': set(),\n        'label': \"Initial array\"\n    })\n    \n    # Run quicksort\n    quicksort(data, 0, len(data) - 1, states)\n    \n    # Final state\n    states.append({\n        'array': list(data),\n        'compared': [],\n        'swapped': [],\n        'sorted': set(range(len(data))),\n        'label': \"Sorted!\"\n    })\n    \n    # Limit frames to ~60\n    stride = max(1, len(states) // 60)\n    states = states[::stride]\n    \n    # Render each state as a frame\n    for state in states:\n        fig, ax = plt.subplots(figsize=(7, 4), dpi=100)\n        \n        arr = state['array']\n        compared = state['compared']\n        swapped = state['swapped']\n        sorted_set = state['sorted']\n        label = state['label']\n        \n        # Color each bar\n        colors = []\n        for i in range(len(arr)):\n            if i in sorted_set:\n                colors.append('green')\n            elif i in swapped:\n                colors.append('red')\n            elif i in compared:\n                colors.append('orange')\n            else:\n                colors.append('steelblue')\n        \n        # Draw bars\n        bars = ax.bar(range(len(arr)), arr, color=colors, edgecolor='black', linewidth=1.5)\n        \n        ax.set_xlabel('Index', fontsize=10)\n        ax.set_ylabel('Value', fontsize=10)\n        ax.set_title(f\"Quick Sort: {label}\", fontsize=11, fontweight='bold')\n        ax.set_ylim(0, max(arr) * 1.1 if arr else 100)\n        ax.grid(axis='y', alpha=0.3)\n        \n        # Legend\n        legend_elements = [\n            mpatches.Patch(facecolor='steelblue', edgecolor='black', label='Unsorted'),\n            mpatches.Patch(facecolor='orange', edgecolor='black', label='Compared'),\n            mpatches.Patch(facecolor='red', edgecolor='black', label='Swapped'),\n            mpatches.Patch(facecolor='green', edgecolor='black', label='Sorted'),\n        ]\n        ax.legend(handles=legend_elements, loc='upper right', fontsize=9)\n        \n        # Save to base64\n        buf = io.BytesIO()\n        fig.savefig(buf, format='png', bbox_inches='tight', dpi=100)\n        buf.seek(0)\n        frame_b64 = base64.b64encode(buf.read()).decode('utf-8')\n        frames.append(frame_b64)\n        \n        plt.close(fig)\n    \n    return {\n        'frames': frames,\n        'step_count': len(states),\n        'algorithm': 'Quick Sort',\n        'input': list(args.get('data', [64, 34, 25, 12, 22, 11, 90, 88])),\n        'explanation_hint': 'Blue=unsorted, Orange=compared, Red=swapped, Green=sorted'\n    }",
+        "steps": [
+          "Read input array from args['data'] or use default [64, 34, 25, 12, 22, 11, 90, 88]",
+          "Execute quicksort recursively, capturing state after each comparison and swap",
+          "Render each state as a bar chart with color-coded bars (unsorted, compared, swapped, sorted)",
+          "Encode each matplotlib figure as base64 PNG and append to frames list",
+          "Return frames, step count, algorithm name, input, and color legend"
+        ]
+      }
+    }
+  }
+}

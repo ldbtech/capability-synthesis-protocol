@@ -37,7 +37,7 @@ import sys
 from typing import Any, Optional
 
 from ..llm.base import BaseLLM
-from .capability import AnyCapability, capability_from_function
+from .capability import AnyCapability, RegisteredCapability, capability_from_function
 from .elicitation import ElicitationManager
 from .executor import Executor
 from .planner import Planner
@@ -254,6 +254,43 @@ class Orchestrator:
             if ev.get("type") == "result":
                 final = {k: v for k, v in ev.items() if k != "type"}
         return final
+
+    async def call_capability(self, name: str, **args: Any) -> Any:
+        """
+        Invoke a single capability directly by name — no planner, no LLM.
+
+        This is the direct-call counterpart to submit()/run_goal(): when you
+        already know which capability you want (e.g. a LangGraph node calling a
+        registered capability), call it straight. Mirrors MCP's `tools/call`.
+
+        Works for both registered (Python function) and synthesized (sandboxed
+        code) capabilities. Raises KeyError if the capability doesn't exist.
+        """
+        cap = await self._registry.resolve(name)
+        if cap is None:
+            raise KeyError(f"capability not found: {name!r}")
+
+        if isinstance(cap, RegisteredCapability):
+            return await cap.invoke(**args)
+
+        # Synthesized — run its generated code in the sandbox.
+        if not cap.code:
+            raise RuntimeError(f"synthesized capability {name!r} has no executable code")
+        sb = await self._sandbox.run(cap.code, args, entrypoint=cap.entrypoint)
+        if not sb.ok:
+            raise RuntimeError(f"capability {name!r} failed: {sb.error}")
+        return sb.result
+
+    async def forget(self, name: str) -> bool:
+        """
+        Forget a synthesized capability (registry + persisted files) so the next
+        request regenerates it. Useful for self-correcting retries when a
+        synthesized capability runs but yields a bad result.
+        """
+        removed = await self._registry.forget_synthesized(name)
+        if self._store:
+            self._store.delete_capability(name)
+        return removed
 
     async def list_capabilities(self) -> list[dict[str, Any]]:
         """Return all registered + synthesized capabilities as dicts (for a web UI)."""

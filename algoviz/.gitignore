@@ -1,0 +1,14 @@
+# Secrets
+.env
+
+# CSP runtime (synthesized capabilities are kept; logs/plans are not)
+backend/planner/jsonrpc.ndjson
+backend/planner/plans/
+
+# Python
+__pycache__/
+*.pyc
+
+# Frontend
+frontend/node_modules/
+frontend/dist/

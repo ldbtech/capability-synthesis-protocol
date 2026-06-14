@@ -113,6 +113,18 @@ class CapabilityRegistry:
 
         return None
 
+    async def forget_synthesized(self, name: str) -> bool:
+        """
+        Drop a synthesized capability so it can be regenerated. Used to recover
+        from a bad synthesis (e.g. code that ran but produced a wrong result).
+        Returns True if something was removed.
+        """
+        async with self._lock:
+            removed = self._synthesized.pop(name, None) is not None
+        if removed:
+            log.debug("forgot synthesized capability %r", name)
+        return removed
+
     def exists(self, name: str) -> bool:
         """Synchronous existence check — safe to call from planner."""
         return (

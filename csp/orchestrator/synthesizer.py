@@ -165,7 +165,7 @@ class Synthesizer:
                     [LLMMessage(role="user", content=prompt)],
                     system=_SYNTHESIS_SYSTEM,
                     temperature=0.2,    # slight creativity for step descriptions
-                    max_tokens=1500,
+                    max_tokens=8000,    # generated code can be long; don't truncate
                 )
                 spec = _assemble_spec(response.content, capability_name)
                 _validate_spec(spec)
