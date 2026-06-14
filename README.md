@@ -9,12 +9,6 @@ You register Python functions as capabilities and submit natural-language goals.
 ## Install
 
 ```bash
-pip install csp-sdk
-```
-
-From source:
-
-```bash
 git clone https://github.com/ldbtech/csp
 cd csp
 pip install -e .
@@ -23,8 +17,8 @@ pip install -e .
 Optional extras:
 
 ```bash
-pip install "csp-sdk[langgraph]"   # LangGraph adapter
-pip install "csp-sdk[dev]"         # pytest, for running the test suite
+pip install -e ".[langgraph]"   # LangGraph adapter
+pip install -e ".[dev]"         # pytest, for running the test suite
 ```
 
 ---
@@ -152,7 +146,7 @@ domain-specific.
 ## Use it inside LangGraph
 
 ```bash
-pip install "csp-sdk[langgraph]"
+pip install -e ".[langgraph]"
 ```
 
 ```python
@@ -216,11 +210,12 @@ and runs it as a node in a LangGraph workflow (`understand → build → narrate
 - **Graphs:** `show BFS on a graph` · `Dijkstra shortest path`
 - **Novel:** `visualize the sieve of Eratosthenes` · `animate the Tower of Hanoi`
 
-App deps (once):
+App deps (once, from the repo root):
 
 ```bash
 pip install fastapi "uvicorn[standard]" pandas python-multipart matplotlib \
-            sentence-transformers networkx "csp-sdk[langgraph]"
+            sentence-transformers networkx
+pip install -e ".[langgraph]"
 ```
 
 > Launch backends with `../../.venv/bin/python -m uvicorn …`, not a bare
@@ -231,7 +226,7 @@ pip install fastapi "uvicorn[standard]" pandas python-multipart matplotlib \
 ## Testing
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev]"   # from the repo root
 pytest -q
 ```
 
