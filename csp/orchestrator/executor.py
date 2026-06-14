@@ -4,9 +4,11 @@ csp.orchestrator.executor
 Executor — walks an ExecutionPlan, runs each step, streams events back.
 
 For each step:
-  - If needs_synthesis: calls synthesizer → stores in registry → mock-executes
-  - If registered: calls the Python function directly
-  - If synthesized (already in registry): mock-executes using spec steps
+  - If registered: calls the developer's Python function directly.
+  - If needs_synthesis: calls the synthesizer → stores the spec in the
+    registry → runs the generated Python in the sandbox.
+  - If synthesized (already in registry): runs its generated Python in
+    the sandbox.
 
 Events are yielded as JSON-RPC 2.0 notification dicts.
 The server writes these to stdout (stdio transport) or the WebSocket.
@@ -15,9 +17,9 @@ Elicitations: if a registered capability raises ElicitRequired, the
 executor yields an elicitation event and awaits the response before
 continuing.
 
-Mock execution: for synthesized capabilities, each step in the spec's
-execution.steps list is yielded as a LOG event with a small simulated
-delay. The final result is a dict with a "completed" key.
+Synthesized execution: the capability's human-readable steps are streamed
+as LOG events, then its generated `run(args)` code is executed in a
+sandboxed subprocess and the real return value becomes the step output.
 """
 
 from __future__ import annotations
@@ -41,7 +43,7 @@ from .synthesizer import Synthesizer
 log = logging.getLogger("csp.executor")
 
 # Delay between streamed progress steps (seconds)
-_MOCK_STEP_DELAY = 0.15
+_STEP_DELAY = 0.15
 
 
 class ElicitRequired(Exception):
@@ -178,29 +180,32 @@ class Executor:
             if isinstance(cap, RegisteredCapability):
                 output = await self._run_registered(cap, step, all_outputs)
             else:
-                # Stream the human-readable progress steps first
-                async for event in self._run_synthesized(cap, step):
+                # Stream the human-readable progress steps, then run the
+                # generated code for real in the sandbox.
+                async for event in self._stream_steps(cap, step):
                     yield event
 
-                # Then actually execute: real Python in the sandbox, or mock
-                if cap.target == "python":
-                    yield _event("LOG", "Running generated code in sandbox...", cap.name)
-                    sb = await self._sandbox.run(
-                        cap.code, step.args, entrypoint=cap.entrypoint,
-                    )
-                    if not sb.ok:
-                        yield _event("LOG", f"Code error: {sb.error}", cap.name)
-                        yield _capability_end(step.capability, success=False, error=sb.error)
-                        return
-                    output = sb.result if isinstance(sb.result, dict) else {"result": sb.result}
-                    yield _event(
-                        "LOG",
-                        f"Code executed in {sb.duration:.2f}s",
-                        cap.name,
-                        metadata={"sandbox_duration": sb.duration},
-                    )
-                else:
-                    output = {"completed": True, "capability": step.capability}
+                if not cap.code:
+                    msg = f"Synthesized capability {cap.name!r} has no executable code"
+                    yield _event("LOG", msg, cap.name)
+                    yield _capability_end(step.capability, success=False, error=msg)
+                    return
+
+                yield _event("LOG", "Running generated code in sandbox...", cap.name)
+                sb = await self._sandbox.run(
+                    cap.code, step.args, entrypoint=cap.entrypoint,
+                )
+                if not sb.ok:
+                    yield _event("LOG", f"Code error: {sb.error}", cap.name)
+                    yield _capability_end(step.capability, success=False, error=sb.error)
+                    return
+                output = sb.result if isinstance(sb.result, dict) else {"result": sb.result}
+                yield _event(
+                    "LOG",
+                    f"Code executed in {sb.duration:.2f}s",
+                    cap.name,
+                    metadata={"sandbox_duration": sb.duration},
+                )
 
             all_outputs[step.capability] = output
             duration = time.monotonic() - t_cap
@@ -231,22 +236,23 @@ class Executor:
         return await cap.invoke(**step.args)
 
     # ------------------------------------------------------------------
-    # Synthesized capability mock execution
+    # Synthesized capability — stream progress, then run real code
     # ------------------------------------------------------------------
 
-    async def _run_synthesized(
+    async def _stream_steps(
         self,
         cap: SynthesizedCapability,
         step: PlanStep,
     ) -> AsyncIterator[dict[str, Any]]:
         """
-        Mock-execute a synthesized capability.
-        Streams each step in the spec as a LOG event.
+        Stream a synthesized capability's human-readable progress steps as LOG
+        events. The actual computation is the generated code, run separately in
+        the sandbox by the caller.
         """
-        log.debug("mock-executing synthesized %r steps=%d", cap.name, len(cap.steps))
+        log.debug("streaming steps for synthesized %r steps=%d", cap.name, len(cap.steps))
         for exec_step in cap.steps:
             yield _event("LOG", exec_step, cap.name)
-            await asyncio.sleep(_MOCK_STEP_DELAY)
+            await asyncio.sleep(_STEP_DELAY)
 
     # ------------------------------------------------------------------
     # Elicitation handling

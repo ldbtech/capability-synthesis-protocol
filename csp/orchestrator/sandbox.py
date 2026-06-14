@@ -3,9 +3,9 @@ csp.orchestrator.sandbox
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 PythonSandbox — runs LLM-generated capability code in an isolated subprocess.
 
-This is what turns a *synthesized* capability from a mock into something that
-actually executes. The synthesizer writes a Python function; the sandbox runs
-it in a fresh `python` subprocess with:
+This is what makes a *synthesized* capability actually execute: the synthesizer
+writes a Python function, and the sandbox runs it in a fresh `python`
+subprocess with:
 
   - a timeout (killed if it runs too long)
   - arguments passed in as JSON on stdin

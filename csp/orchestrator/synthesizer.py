@@ -9,11 +9,11 @@ This is what makes csp different from MCP:
 - csp: synthesizer generates new capability specs on demand
 
 The output is a SynthesizedCapability whose spec IS the JSON-RPC 2.0
-artifact. For MVP it is mock-executed. Future runtimes (Docker, K8s,
-Terraform) will read this spec and know exactly how to run it.
+artifact and carries the real Python that the executor runs in a sandbox.
 
-The LLM is prompted to return ONLY valid JSON — no prose, no markdown.
-Response is parsed, validated against required fields, and stored.
+The LLM returns the implementation as a ```python code block plus a ```json
+metadata block. Both are parsed, the code is compile-checked, and the
+assembled spec is validated before it is stored and run.
 """
 
 from __future__ import annotations

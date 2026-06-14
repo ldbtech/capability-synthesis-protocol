@@ -51,6 +51,9 @@ app = Orchestrator(
     llm=llm,
     planner_dir="planner",
     synthesis_guidance=_SYNTHESIS_GUIDANCE,
+    # Headless matplotlib for any generated plotting code. This is an app
+    # concern (our generated code uses matplotlib) — not the CSP library's.
+    sandbox_env={"MPLBACKEND": "Agg"},
 )
 
 

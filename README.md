@@ -91,7 +91,7 @@ Executor → calls greet(name="Alice", language="spanish")
 LLM summarizes result → streams back to client
 ```
 
-If the capability is **not registered**, the Synthesizer generates a JSON-RPC 2.0 spec via LLM and mock-executes it. The spec is stored in the registry for reuse.
+If the capability is **not registered**, the Synthesizer generates a JSON-RPC 2.0 spec — including **real Python** — via the LLM. The executor runs that code in a sandboxed subprocess over your data, and the spec (plus its generated `.py`) is stored in the registry for reuse.
 
 ---
 
@@ -137,6 +137,52 @@ csp/
 ├── pyproject.toml
 └── LICENSE
 ```
+
+---
+
+## Use it different ways (transports & adapters)
+
+Like MCP, CSP separates its **core** (plan → synthesize → execute) from **how
+you consume it**. The same `Orchestrator` can be driven as:
+
+| Form | API | Use case |
+|---|---|---|
+| stdio JSON-RPC server | `app.run()` | MCP-style host/subprocess |
+| in-process event stream | `async for ev in app.submit(goal)` | FastAPI + SSE, live UIs |
+| one-shot coroutine | `await app.run_goal(goal)` | scripts, tests, adapters |
+| **LangGraph** node / tool / graph | `csp.adapters.langgraph` | agent frameworks |
+
+### LangGraph
+
+```bash
+pip install "csp-sdk[langgraph]"
+```
+
+```python
+from csp import Orchestrator, AnthropicLLM
+from csp.adapters.langgraph import csp_node, csp_tool, build_csp_graph
+from langgraph.graph import StateGraph, START, END
+
+app = Orchestrator("my-app", llm=AnthropicLLM())
+
+# A) drop CSP into your own graph as a node
+g = StateGraph(dict)
+g.add_node("csp", csp_node(app, ambient_key="data"))
+g.add_edge(START, "csp"); g.add_edge("csp", END)
+graph = g.compile()
+out = await graph.ainvoke({"goal": "mean of the x values", "data": {"rows": rows}})
+
+# B) give an existing agent CSP as one tool (synthesizes code on demand)
+tool = csp_tool(app)        # a LangChain StructuredTool
+
+# C) one-line compiled graph
+graph = build_csp_graph(app)
+```
+
+See [`examples/langgraph_integration.py`](examples/langgraph_integration.py).
+Adapters import their framework lazily, so a plain `csp-sdk` install never pulls
+in LangGraph. Other frameworks (CrewAI, AutoGen, …) plug in the same way — add
+an adapter under [`csp/adapters/`](csp/adapters/).
 
 ---
 

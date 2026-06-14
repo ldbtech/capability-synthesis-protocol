@@ -195,6 +195,7 @@ class Orchestrator:
                 synthesizer=self._synthesizer,
                 elicitation_manager=elicit_mgr,
                 goal=goal,
+                sandbox=self._sandbox,
             )
 
             result_payload: dict[str, Any] = {}
@@ -230,6 +231,29 @@ class Orchestrator:
         finally:
             await elicit_mgr.cancel_all()
             self._elicitation_managers.pop(session_id, None)
+
+    async def run_goal(
+        self,
+        goal: str,
+        *,
+        session_id: Optional[str] = None,
+        on_elicit: Optional[Any] = None,
+        ambient: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        """
+        Headless one-shot: plan + synthesize + execute a goal and return ONLY
+        the final result dict (no streaming). This is the framework-neutral
+        primitive that adapters (LangGraph, etc.) build on.
+
+        Returns the result payload: {"status", "summary", "output", ...}.
+        """
+        final: dict[str, Any] = {"status": "ERROR", "summary": "no result", "output": {}}
+        async for ev in self.submit(
+            goal, session_id=session_id, on_elicit=on_elicit, ambient=ambient
+        ):
+            if ev.get("type") == "result":
+                final = {k: v for k, v in ev.items() if k != "type"}
+        return final
 
     async def list_capabilities(self) -> list[dict[str, Any]]:
         """Return all registered + synthesized capabilities as dicts (for a web UI)."""
@@ -451,6 +475,7 @@ class Orchestrator:
                 synthesizer=self._synthesizer,
                 elicitation_manager=elicit_mgr,
                 goal=goal,
+                sandbox=self._sandbox,
             )
 
             result_payload: dict[str, Any] = {}
