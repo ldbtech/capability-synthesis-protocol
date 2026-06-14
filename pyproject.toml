@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "csp-sdk"
+version = "0.1.0"
+description = "Capability Synthesis Protocol — build AI orchestrators that plan, execute, and synthesize capabilities at runtime."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+authors = [{ name = "alidaho" }]
+keywords = ["ai", "llm", "orchestration", "mcp", "agents", "anthropic"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "anthropic>=0.40.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "hatchling",
+]
+
+[project.urls]
+Homepage = "https://github.com/ldbtech/csp"
+Issues = "https://github.com/ldbtech/csp/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["csp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

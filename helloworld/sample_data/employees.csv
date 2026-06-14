@@ -1,0 +1,16 @@
+name,department,age,salary,city,years_experience
+Alice Chen,Engineering,32,145000,San Francisco,8
+Bob Martinez,Sales,45,98000,Austin,20
+Carol Singh,Engineering,28,128000,Seattle,5
+David Okafor,Marketing,38,87000,New York,12
+Emma Thompson,Engineering,41,162000,San Francisco,16
+Frank Yamamoto,Sales,29,72000,Austin,4
+Grace Liu,Data Science,35,138000,Seattle,9
+Henry Adams,Marketing,52,95000,New York,25
+Iris Patel,Data Science,30,121000,San Francisco,6
+Jack Wilson,Engineering,26,112000,Seattle,3
+Karen Brooks,Sales,48,105000,Austin,22
+Leo Garcia,Data Science,44,155000,San Francisco,18
+Mia Johnson,Marketing,33,82000,New York,7
+Noah Kim,Engineering,37,148000,Seattle,11
+Olivia Davis,Sales,31,79000,Austin,6

@@ -1,0 +1,52 @@
+{
+  "name": "average_salary_by_department",
+  "description": "Calculate the average salary for each department from employee records.",
+  "version": "1.0.0",
+  "synthesized_at": 1781377113.1505651,
+  "id": "f8c27936-8bac-49cb-a163-493fe1b60f05",
+  "spec": {
+    "jsonrpc": "2.0",
+    "method": "csp.capability.invoke",
+    "params": {
+      "capability_id": "average_salary_by_department",
+      "version": "1.0.0",
+      "description": "Calculate the average salary for each department from employee records.",
+      "kind": "synthesized",
+      "params_schema": {
+        "rows": {
+          "type": "array",
+          "description": "List of employee records, each with name, department, age, salary, city, and years_experience",
+          "required": true
+        },
+        "columns": {
+          "type": "array",
+          "description": "List of column names present in the data",
+          "required": true
+        }
+      },
+      "result_schema": {
+        "average_salary_by_department": {
+          "type": "object",
+          "description": "Dictionary mapping department names to their average salary"
+        },
+        "summary": {
+          "type": "object",
+          "description": "Summary statistics including total departments and overall average salary"
+        }
+      },
+      "execution": {
+        "target": "python",
+        "transport": "stdio",
+        "entrypoint": "run",
+        "code": "def run(args):\n    rows = args.get('rows', [])\n    \n    # Group salaries by department\n    department_salaries = {}\n    for row in rows:\n        dept = row.get('department')\n        salary = row.get('salary')\n        if dept and salary is not None:\n            if dept not in department_salaries:\n                department_salaries[dept] = []\n            department_salaries[dept].append(salary)\n    \n    # Calculate average salary per department\n    average_salary_by_department = {}\n    for dept, salaries in department_salaries.items():\n        average_salary_by_department[dept] = sum(salaries) / len(salaries)\n    \n    # Calculate overall average\n    all_salaries = [s for salaries in department_salaries.values() for s in salaries]\n    overall_average = sum(all_salaries) / len(all_salaries) if all_salaries else 0\n    \n    return {\n        'average_salary_by_department': average_salary_by_department,\n        'summary': {\n            'total_departments': len(average_salary_by_department),\n            'overall_average_salary': overall_average,\n            'total_employees': len(rows)\n        }\n    }",
+        "steps": [
+          "Extract rows and columns from input arguments",
+          "Group employee salaries by their department",
+          "Calculate the average salary for each department",
+          "Compute overall average salary across all departments",
+          "Return department averages and summary statistics"
+        ]
+      }
+    }
+  }
+}
