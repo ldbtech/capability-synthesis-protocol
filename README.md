@@ -9,7 +9,7 @@ You register Python functions as capabilities and submit natural-language goals.
 ## Install
 
 ```bash
-git clone https://github.com/ldbtech/csp
+git clone https://github.com/ldbtech/capability-synthesis-protocol
 cd csp
 pip install -e .
 ```
