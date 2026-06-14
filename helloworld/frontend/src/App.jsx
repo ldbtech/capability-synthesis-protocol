@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import Architecture from "./Architecture.jsx";
 
 const API = "/api";
 
 export default function App() {
+  const [view, setView] = useState("chat");
   const [dataset, setDataset] = useState(null);
   const [caps, setCaps] = useState([]);
   const [messages, setMessages] = useState([]);
@@ -119,6 +121,13 @@ export default function App() {
   }
 
   return (
+    <>
+      <nav className="viewnav">
+        <button className={view === "chat" ? "on" : ""} onClick={() => setView("chat")}>Chat</button>
+        <button className={view === "arch" ? "on" : ""} onClick={() => setView("arch")}>How it works</button>
+      </nav>
+
+      {view === "arch" ? <Architecture /> : (
     <div className="app">
       <aside className="sidebar">
         <h1>CSP<span>·</span>CSV-RAG</h1>
@@ -179,6 +188,8 @@ export default function App() {
         </div>
       </main>
     </div>
+      )}
+    </>
   );
 }
 

@@ -89,6 +89,9 @@ A synthesized capability's spec **and** its generated `.py` are written to a
 `planner/` folder in your project and **reloaded on the next run** — so a
 capability is synthesized at most once.
 
+> Full diagrams (MCP-style architecture, request lifecycle, CSP↔MCP comparison):
+> see [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ---
 
 ## API surface
