@@ -1,8 +1,8 @@
 # CSP — Capability Synthesis Protocol
 
-CSP is a Python library for building AI orchestrators that **plan**, **execute**, and **synthesize** capabilities at runtime using LLMs.
+CSP is a Python library for building AI orchestrators that **plan**, **execute**, and **synthesize** capabilities at runtime.
 
-Inspired by the MCP (Model Context Protocol) wire format — you register Python functions as capabilities, submit natural-language goals, and CSP figures out which capabilities to run and in what order. If a capability doesn't exist yet, CSP synthesizes a JSON-RPC 2.0 spec for it on the fly using an LLM.
+You register Python functions as capabilities and submit natural-language goals. CSP plans which capabilities to run. **If a capability doesn't exist, CSP writes real Python for it on the fly, runs that code in a sandbox, and reuses it forever after.** The wire format and consumption model mirror MCP (Model Context Protocol).
 
 ---
 
@@ -12,7 +12,7 @@ Inspired by the MCP (Model Context Protocol) wire format — you register Python
 pip install csp-sdk
 ```
 
-Or install from source:
+From source:
 
 ```bash
 git clone https://github.com/ldbtech/csp
@@ -20,11 +20,16 @@ cd csp
 pip install -e .
 ```
 
+Optional extras:
+
+```bash
+pip install "csp-sdk[langgraph]"   # LangGraph adapter
+pip install "csp-sdk[dev]"         # pytest, for running the test suite
+```
+
 ---
 
 ## Quickstart
-
-**server.py** — define your capabilities:
 
 ```python
 from csp import Orchestrator, ElicitRequired, AnthropicLLM
@@ -32,7 +37,6 @@ from csp import Orchestrator, ElicitRequired, AnthropicLLM
 app = Orchestrator(
     "my-server",
     llm=AnthropicLLM(),          # reads ANTHROPIC_API_KEY + ANTHROPIC_MODEL from env
-    # or pass inline:
     # llm=AnthropicLLM(api_key="sk-ant-...", model="claude-sonnet-4-6"),
 )
 
@@ -43,18 +47,15 @@ async def greet(name: str, language: str = "english") -> dict:
     return {"message": f"{greetings.get(language, 'Hello')}, {name}!"}
 
 @app.capability("send_report")
-async def send_report(recipient: str) -> dict:
-    """Send a report. Requires approval first."""
-    raise ElicitRequired(
-        kind="approval",
-        question=f"Send report to {recipient}?",
-    )
+async def send_report(recipient: str, _elicit_response: str = "") -> dict:
+    """Send a report — asks for approval first."""
+    if not _elicit_response:
+        raise ElicitRequired(kind="approval", question=f"Send report to {recipient}?")
+    return {"sent": _elicit_response.lower() == "yes"}
 
 if __name__ == "__main__":
-    app.run()   # listens on stdin, writes to stdout — identical to MCP
+    app.run()   # stdio JSON-RPC server — identical to MCP
 ```
-
-**Run it:**
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-... python server.py
@@ -62,53 +63,184 @@ ANTHROPIC_API_KEY=sk-ant-... python server.py
 
 ---
 
-## Environment Variables
+## How it works
+
+```
+Goal: "average salary by department"
+        │
+   ┌────▼─────┐   no matching capability?
+   │ Planner  │──────────────────────────────┐
+   └────┬─────┘                               │
+        │ found a registered capability       │ needs synthesis
+   ┌────▼─────────┐                    ┌───────▼────────────┐
+   │  Executor    │                    │   Synthesizer      │
+   │ runs your fn │                    │ LLM writes real    │
+   └────┬─────────┘                    │ Python (run(args)) │
+        │                              └───────┬────────────┘
+        │                              ┌───────▼────────────┐
+        │                              │  PythonSandbox      │
+        │                              │ runs the code in a  │
+        │                              │ subprocess (timeout)│
+        │                              └───────┬────────────┘
+        └──────────────► result ◄──────────────┘
+```
+
+A synthesized capability's spec **and** its generated `.py` are written to a
+`planner/` folder in your project and **reloaded on the next run** — so a
+capability is synthesized at most once.
+
+---
+
+## API surface
+
+The same `Orchestrator` can be driven however you need — CSP keeps its core
+(plan → synthesize → execute) separate from how you consume it.
+
+| Call | What it does |
+|---|---|
+| `app.run()` | Start a **stdio JSON-RPC** server (MCP-style host/subprocess). |
+| `async for ev in app.submit(goal, ambient=…)` | Plan + execute, **streaming** event dicts (FastAPI/SSE, live UIs). |
+| `await app.run_goal(goal, ambient=…)` | Headless **one-shot** → final result dict (scripts, adapters). |
+| `await app.call_capability(name, **args)` | **Direct** call of one capability — no planner. CSP's `tools/call`. |
+| `await app.list_capabilities()` | All capabilities (registered + synthesized, with generated code). |
+| `await app.forget(name)` | Drop a synthesized capability so it regenerates (self-correcting retries). |
+
+`ambient` is a dict (e.g. `{"rows": [...], "columns": [...]}`) merged into every
+step's args, so synthesized code can compute over your data.
+
+### Orchestrator options
+
+```python
+Orchestrator(
+    name, llm,
+    planner_dir="planner",          # where specs/logs/plans persist (None to disable)
+    synthesis_guidance="",          # app-specific conventions for generated code
+    sandbox_env={"MPLBACKEND": "Agg"},  # extra env for the sandbox subprocess
+    synthesis_timeout=30.0,
+    elicitation_timeout=120.0,
+)
+```
+
+`synthesis_guidance` is how an **app** teaches CSP its domain (data shapes,
+output formats like "plots → base64 PNG") without the library knowing anything
+domain-specific.
+
+---
+
+## Use it inside LangGraph
+
+```bash
+pip install "csp-sdk[langgraph]"
+```
+
+```python
+from csp.adapters.langgraph import csp_node, csp_tool, build_csp_graph
+from langgraph.graph import StateGraph, START, END
+
+# A) CSP as a node in your own graph
+g = StateGraph(dict)
+g.add_node("csp", csp_node(app, ambient_key="data"))
+g.add_edge(START, "csp"); g.add_edge("csp", END)
+graph = g.compile()
+out = await graph.ainvoke({"goal": "mean of the x values", "data": {"rows": rows}})
+
+# B) CSP as one tool an agent can call (synthesizes code on demand)
+tool = csp_tool(app)          # a LangChain StructuredTool
+
+# C) one-line compiled graph
+graph = build_csp_graph(app)
+```
+
+Adapters import their framework lazily — a plain `csp-sdk` install never pulls in
+LangGraph. Other frameworks plug in the same way under [`csp/adapters/`](csp/adapters/).
+Runnable example: [`examples/langgraph_integration.py`](examples/langgraph_integration.py).
+
+---
+
+## Demo apps
+
+Two full apps live in this repo. They run on **different ports**, so both can be
+up at once.
+
+| App | Folder | Shows | Backend | Frontend |
+|---|---|---|---|---|
+| **CSV-RAG** | [`helloworld/`](helloworld/) | RAG for lookups + synthesized code for analysis/plots | :8000 | :5173 |
+| **AlgoViz** | [`algoviz/`](algoviz/) | CSP **inside LangGraph**; invents an algorithm visualizer live | :8001 | :5174 |
+
+### CSV-RAG — ask anything about a CSV
+
+```bash
+cd helloworld/backend && ../../.venv/bin/python -m uvicorn app:api --reload --port 8000
+cd helloworld/frontend && npm install && npm run dev          # http://localhost:5173
+```
+
+Upload `helloworld/sample_data/employees.csv`, then try:
+
+- **Lookup (RAG):** `Who works in Engineering?` · `Find the most experienced person in Seattle`
+- **Computed (synthesized):** `Average salary by department` · `Correlation between age and salary` · `Top 5 highest-paid employees` · `What percent earn above the median?`
+- **Plots (synthesized matplotlib):** `Plot a histogram of salaries` · `Bar chart of average salary by department` · `Scatter of age vs salary`
+
+### AlgoViz — self-building algorithm visualizer (CSP + LangGraph)
+
+```bash
+cd algoviz/backend && ../../.venv/bin/python -m uvicorn app:api --reload --port 8001
+cd algoviz/frontend && npm install && npm run dev             # http://localhost:5174
+```
+
+Type an algorithm — there's no code for it, so CSP writes the visualizer live
+and runs it as a node in a LangGraph workflow (`understand → build → narrate`):
+
+- **Sorts/searches:** `visualize quicksort` · `merge sort` · `insertion sort` · `animate binary search`
+- **Graphs:** `show BFS on a graph` · `Dijkstra shortest path`
+- **Novel:** `visualize the sieve of Eratosthenes` · `animate the Tower of Hanoi`
+
+App deps (once):
+
+```bash
+pip install fastapi "uvicorn[standard]" pandas python-multipart matplotlib \
+            sentence-transformers networkx "csp-sdk[langgraph]"
+```
+
+> Launch backends with `../../.venv/bin/python -m uvicorn …`, not a bare
+> `uvicorn`, so they use the venv's interpreter and dependencies.
+
+---
+
+## Testing
+
+```bash
+pip install -e ".[dev]"
+pytest -q
+```
+
+The suite in [`tests/`](tests/) runs **without any network/LLM calls** (a
+`FakeLLM` stands in), covering the sandbox (real execution, errors, timeouts,
+env), kwargs filtering, two-block synthesis parsing, direct `call_capability`,
+`forget`, and `planner/` persistence round-trips.
+
+---
+
+## Environment variables
 
 | Variable | Required | Description |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Yes | Your Anthropic API key |
-| `ANTHROPIC_MODEL` | No | Claude model to use (default: `claude-haiku-4-5-20251001`) |
-
-Available models:
-
-```
-claude-haiku-4-5-20251001   # fast, cheapest — default
-claude-sonnet-4-6           # balanced speed + quality
-claude-opus-4-8             # most capable
-```
-
----
-
-## How it works
-
-```
-Developer submits goal: "greet Alice in Spanish"
-        ↓
-Planner (LLM) → checks registry → found: greet
-        ↓
-Executor → calls greet(name="Alice", language="spanish")
-        ↓
-LLM summarizes result → streams back to client
-```
-
-If the capability is **not registered**, the Synthesizer generates a JSON-RPC 2.0 spec — including **real Python** — via the LLM. The executor runs that code in a sandboxed subprocess over your data, and the spec (plus its generated `.py`) is stored in the registry for reuse.
+| `ANTHROPIC_MODEL` | No | Model to use (default `claude-haiku-4-5-20251001`) |
 
 ---
 
 ## Wire protocol
 
-CSP uses **JSON-RPC 2.0 over stdio** (NDJSON, one message per line) — the same transport as MCP. Each message is a JSON object terminated by `\n`.
-
-Key methods:
+JSON-RPC 2.0 over stdio (NDJSON, one message per line) — the same transport as MCP.
 
 | Method | Direction | Description |
 |---|---|---|
 | `initialize` | client → server | Handshake |
 | `csp.goal.submit` | client → server | Submit a natural-language goal |
-| `csp.capability.list` | client → server | List registered capabilities |
+| `csp.capability.list` | client → server | List capabilities |
+| `csp.capability.invoke` | — | Spec method for a single capability (see `call_capability`) |
 | `csp.stream.event` | server → client | Streaming progress event |
-| `csp.elicit.request` | server → client | Human-in-the-loop pause |
-| `csp.elicit.respond` | client → server | Answer an elicitation |
+| `csp.elicit.request` / `csp.elicit.respond` | both | Human-in-the-loop |
 | `csp.result` | server → client | Terminal result |
 
 ---
@@ -117,85 +249,40 @@ Key methods:
 
 ```
 csp/
-├── csp/
-│   ├── __init__.py          # public API: Orchestrator, ElicitRequired, AnthropicLLM
-│   ├── llm/
-│   │   ├── base.py          # BaseLLM abstract interface
-│   │   └── anthropic.py     # AnthropicLLM implementation
+├── csp/                       # the library
+│   ├── __init__.py            # public API: Orchestrator, ElicitRequired, AnthropicLLM
+│   ├── llm/                   # BaseLLM + AnthropicLLM
 │   ├── orchestrator/
-│   │   ├── server.py        # Orchestrator class + stdio transport
-│   │   ├── planner.py       # LLM-based planner
-│   │   ├── synthesizer.py   # capability synthesis
-│   │   ├── executor.py      # plan execution + ElicitRequired
-│   │   ├── registry.py      # capability registry
-│   │   ├── capability.py    # RegisteredCapability / SynthesizedCapability
-│   │   └── elicitation.py   # ElicitationManager
-│   └── client/
-│       └── types.py         # StreamEvent, ElicitRequest, Result, ...
-├── helloworld/              # example developer project
-├── tests/
+│   │   ├── server.py          # Orchestrator: run / submit / run_goal / call_capability / forget
+│   │   ├── planner.py         # LLM planner (decides reuse vs synthesize)
+│   │   ├── synthesizer.py     # generates real Python (two-block format)
+│   │   ├── sandbox.py         # PythonSandbox — runs generated code in a subprocess
+│   │   ├── executor.py        # runs the plan; ElicitRequired
+│   │   ├── registry.py        # capability registry (+ forget, persistence hook)
+│   │   ├── capability.py      # Registered / Synthesized capabilities
+│   │   ├── planner_store.py   # planner/ folder: JSON-RPC log, specs, plans
+│   │   └── elicitation.py     # human-in-the-loop
+│   ├── adapters/
+│   │   └── langgraph.py       # csp_node / csp_tool / build_csp_graph
+│   └── client/types.py        # StreamEvent, ElicitRequest, Result, …
+├── helloworld/                # CSV-RAG demo  (:8000 / :5173)
+├── algoviz/                   # AlgoViz demo  (:8001 / :5174)
+├── examples/                  # langgraph_integration.py
+├── tests/                     # network-free pytest suite
 ├── pyproject.toml
 └── LICENSE
 ```
 
 ---
 
-## Use it different ways (transports & adapters)
-
-Like MCP, CSP separates its **core** (plan → synthesize → execute) from **how
-you consume it**. The same `Orchestrator` can be driven as:
-
-| Form | API | Use case |
-|---|---|---|
-| stdio JSON-RPC server | `app.run()` | MCP-style host/subprocess |
-| in-process event stream | `async for ev in app.submit(goal)` | FastAPI + SSE, live UIs |
-| one-shot coroutine | `await app.run_goal(goal)` | scripts, tests, adapters |
-| **LangGraph** node / tool / graph | `csp.adapters.langgraph` | agent frameworks |
-
-### LangGraph
-
-```bash
-pip install "csp-sdk[langgraph]"
-```
-
-```python
-from csp import Orchestrator, AnthropicLLM
-from csp.adapters.langgraph import csp_node, csp_tool, build_csp_graph
-from langgraph.graph import StateGraph, START, END
-
-app = Orchestrator("my-app", llm=AnthropicLLM())
-
-# A) drop CSP into your own graph as a node
-g = StateGraph(dict)
-g.add_node("csp", csp_node(app, ambient_key="data"))
-g.add_edge(START, "csp"); g.add_edge("csp", END)
-graph = g.compile()
-out = await graph.ainvoke({"goal": "mean of the x values", "data": {"rows": rows}})
-
-# B) give an existing agent CSP as one tool (synthesizes code on demand)
-tool = csp_tool(app)        # a LangChain StructuredTool
-
-# C) one-line compiled graph
-graph = build_csp_graph(app)
-```
-
-See [`examples/langgraph_integration.py`](examples/langgraph_integration.py).
-Adapters import their framework lazily, so a plain `csp-sdk` install never pulls
-in LangGraph. Other frameworks (CrewAI, AutoGen, …) plug in the same way — add
-an adapter under [`csp/adapters/`](csp/adapters/).
-
----
-
 ## Bring your own LLM
 
-Implement `BaseLLM` to use any provider:
-
 ```python
-from csp.llm import BaseLLM, LLMMessage, LLMResponse
+from csp.llm import BaseLLM, LLMResponse
 
 class MyLLM(BaseLLM):
     async def complete(self, messages, *, max_tokens=4096, temperature=0.0, system=None) -> LLMResponse:
-        # call your provider here
+        ...  # call your provider
         return LLMResponse(content="...", input_tokens=0, output_tokens=0)
 
 app = Orchestrator("my-app", llm=MyLLM())
