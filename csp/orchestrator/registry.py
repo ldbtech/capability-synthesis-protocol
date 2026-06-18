@@ -217,9 +217,34 @@ class CapabilityRegistry:
                     + (f" | params: {params}" if params else "")
                 )
             else:
+                # Expose the synthesized capability's INTERFACE (params_schema)
+                # so the planner can REUSE it by passing new args instead of
+                # resynthesizing a near-duplicate. A general capability is only
+                # reusable if the planner can see its knobs.
+                schema = getattr(cap, "params_schema", {}) or {}
+                params = ", ".join(
+                    f"{pname}: {pdef.get('type', 'any') if isinstance(pdef, dict) else 'any'}"
+                    for pname, pdef in schema.items()
+                )
                 lines.append(
                     f"- {cap.name} ({kind_label}): {cap.description or 'no description'}"
+                    + (f" | params: {params}" if params else "")
                 )
+
+        # Always advertise the built-in evolve operation so the planner can
+        # choose to patch an existing synthesized capability instead of
+        # synthesizing a new one from scratch.
+        if any(isinstance(c, SynthesizedCapability) for c in all_caps):
+            lines.append(
+                "- evolve__<capability_name> (built-in): "
+                "Patch an existing synthesized capability's OWN code with a natural-language "
+                "instruction. Use ONLY to change THAT capability's same function — e.g. add a "
+                "column to its table, change its sorting, fix a wrong value, add a field to its "
+                "output. Do NOT evolve a capability to answer a DIFFERENT kind of question: a "
+                "task of a different function/category (e.g. a match prediction vs a standings "
+                "table) is a NEW capability (needs_synthesis: true), never an evolution of an "
+                "unrelated one. Args: target_name (str), instruction (str)."
+            )
 
         return "\n".join(lines)
 

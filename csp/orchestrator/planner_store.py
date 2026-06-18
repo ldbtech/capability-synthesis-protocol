@@ -129,6 +129,7 @@ class PlannerStore:
             "synthesized_at": cap.synthesized_at,
             "id":             cap.id,
             "spec":           cap.spec,
+            "credentials":    getattr(cap, "credentials", []),
         }
         try:
             path.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -174,6 +175,7 @@ class PlannerStore:
                     spec=record["spec"],
                     description=record.get("description", ""),
                     version=record.get("version", "1.0.0"),
+                    credentials=record.get("credentials", []),
                 ))
             except Exception as exc:
                 log.warning("skipping unreadable capability file %s: %s", path.name, exc)

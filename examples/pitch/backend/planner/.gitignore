@@ -1,0 +1,6 @@
+# CSP planner — runtime artifacts (auto-generated)
+jsonrpc.ndjson
+plans/
+
+# Synthesized capabilities are reusable — keep them tracked.
+!capabilities/

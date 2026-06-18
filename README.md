@@ -175,22 +175,34 @@ Runnable example: [`examples/langgraph_integration.py`](examples/langgraph_integ
 
 ## Demo apps
 
-Two full apps live in this repo. They run on **different ports**, so both can be
-up at once.
+All demo apps live under [`examples/`](examples/), each with its own backend +
+frontend. They run on **different ports**, so several can be up at once. The
+simplest way to launch them is the bundled Makefile:
+
+```bash
+cd examples
+make install          # one-time: npm install for every frontend
+make dev              # run csv-rag + algoviz + montage + pitch (Ctrl-C stops all)
+make csv-rag          # …or just one app
+```
 
 | App | Folder | Shows | Backend | Frontend |
 |---|---|---|---|---|
-| **CSV-RAG** | [`helloworld/`](helloworld/) | RAG for lookups + synthesized code for analysis/plots | :8000 | :5173 |
-| **AlgoViz** | [`algoviz/`](algoviz/) | CSP **inside LangGraph**; invents an algorithm visualizer live | :8001 | :5174 |
+| **CSV-RAG** | [`examples/helloworld/`](examples/helloworld/) | RAG for lookups + synthesized code for analysis/plots | :8000 | :5173 |
+| **AlgoViz** | [`examples/algoviz/`](examples/algoviz/) | CSP **inside LangGraph**; invents an algorithm visualizer live | :8001 | :5174 |
+| **Montage AI** | [`examples/montage-ai/`](examples/montage-ai/) | Figma-style canvas that **synthesizes its own design capabilities** | :8002 | :5175 |
+| **Pitch** | [`examples/pitch/`](examples/pitch/) | Live World Cup copilot — fetches real data + synthesizes predictions | :8003 | :5176 |
 
 ### CSV-RAG — ask anything about a CSV
 
 ```bash
-cd helloworld/backend && ../../.venv/bin/python -m uvicorn app:api --reload --port 8000
-cd helloworld/frontend && npm install && npm run dev          # http://localhost:5173
+cd examples && make csv-rag        # → http://localhost:5173
+# or manually:
+cd examples/helloworld/backend && ../../../.venv/bin/python -m uvicorn app:api --reload --port 8000
+cd examples/helloworld/frontend && npm install && npm run dev          # http://localhost:5173
 ```
 
-Upload `helloworld/sample_data/employees.csv`, then try:
+Upload `examples/helloworld/sample_data/employees.csv`, then try:
 
 - **Lookup (RAG):** `Who works in Engineering?` · `Find the most experienced person in Seattle`
 - **Computed (synthesized):** `Average salary by department` · `Correlation between age and salary` · `Top 5 highest-paid employees` · `What percent earn above the median?`
@@ -199,8 +211,10 @@ Upload `helloworld/sample_data/employees.csv`, then try:
 ### AlgoViz — self-building algorithm visualizer (CSP + LangGraph)
 
 ```bash
-cd algoviz/backend && ../../.venv/bin/python -m uvicorn app:api --reload --port 8001
-cd algoviz/frontend && npm install && npm run dev             # http://localhost:5174
+cd examples && make algoviz        # → http://localhost:5174
+# or manually:
+cd examples/algoviz/backend && ../../../.venv/bin/python -m uvicorn app:api --reload --port 8001
+cd examples/algoviz/frontend && npm install && npm run dev             # http://localhost:5174
 ```
 
 Type an algorithm — there's no code for it, so CSP writes the visualizer live
@@ -209,6 +223,25 @@ and runs it as a node in a LangGraph workflow (`understand → build → narrate
 - **Sorts/searches:** `visualize quicksort` · `merge sort` · `insertion sort` · `animate binary search`
 - **Graphs:** `show BFS on a graph` · `Dijkstra shortest path`
 - **Novel:** `visualize the sieve of Eratosthenes` · `animate the Tower of Hanoi`
+
+### Montage AI — self-evolving design canvas
+
+```bash
+cd examples && make montage        # → http://localhost:5175
+# or manually:
+cd examples/montage-ai/backend && ../../../.venv/bin/python -m uvicorn app:app --reload --port 8002
+cd examples/montage-ai/frontend && npm install && npm run dev          # http://localhost:5175
+```
+
+Type design requests in natural language — CSP synthesizes the layout capability live and renders it on the SVG canvas:
+
+- **Layouts:** `Create a mobile app login screen` · `Make a 3-column pricing card layout`
+- **Components:** `Add a navigation bar at the top` · `Create a dashboard with stats cards`
+- **Creative:** `Draw a pie chart with 4 segments` · `Make a timeline with 4 steps`
+
+Every new design operation that didn't exist before is synthesized, persisted to `planner/`, and reused on future runs.
+
+---
 
 App deps (once, from the repo root):
 

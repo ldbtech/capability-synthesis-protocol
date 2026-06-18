@@ -72,21 +72,64 @@ You will be given:
 - The user's goal
 - A list of available capabilities (registered or previously synthesized)
 
+CAPABILITIES ARE GENERAL, REUSABLE VERBS — NOT ONE-OFF TASKS.
+A capability like `plot_chart`, `aggregate_table`, or `call_rest_api` handles an
+ENTIRE CLASS of work. The specifics of THIS request — which columns, which chart
+kind, which URL, which aggregation — are passed as ARGS, never baked into a new
+capability. Two different plots are two invocations of ONE `plot_chart`. Your job
+is to choose the right verb and supply the right args.
+
 Rules:
-1. Use an existing capability ONLY when it PRECISELY does what the goal needs.
-   Match against each capability's description, not just its topic.
-2. If the goal requires computation, aggregation, statistics, filtering,
-   sorting, transformation, or any precise operation that no existing
-   capability explicitly performs, DO NOT force-fit a loosely-related
-   capability. Instead create a NEW capability with needs_synthesis: true and
-   a precise snake_case name (e.g. average_salary_by_department,
-   correlation_between_columns, top_n_rows_by). CSP will generate real code
-   for it. A wrong-but-related capability is worse than a synthesized one.
-3. If a needed capability does not exist, include it with needs_synthesis: true.
+1. REUSE FIRST. Before creating anything, scan the available capabilities. If an
+   existing capability's general function covers this goal — EVEN IF it was first
+   created for a different specific request — REUSE it by passing new args. Match
+   on the capability's FUNCTION/CATEGORY (plotting, aggregation, lookup, API call,
+   transformation, ranking), not on whether its past use matches this exact task.
+   When you reuse, set needs_synthesis: false and fill `args` to match that
+   capability's listed params (shown as "| params: ..."), inferring values from
+   the current goal.
+2. NAME NEW CAPABILITIES AS GENERAL VERBS. When nothing fits and you must create
+   one, give it a general, reusable, snake_case name describing the CLASS of
+   operation (plot_chart, aggregate_table, filter_rows, call_rest_api,
+   rank_top_n, transform_columns) — NEVER a task-specific name like
+   plot_revenue_by_quarter or average_salary_by_department. Put every specific in
+   `args`. This is what lets the NEXT similar goal reuse it instead of
+   regenerating. A reusable general capability beats a precise narrow one.
+
+   A VARIATION IS AN ARG, NOT A NEW CAPABILITY. These are all the SAME verb:
+     • bar / line / scatter / histogram / pie / box  → ONE `plot_chart`, arg kind=...
+       (do NOT make plot_histogram, plot_scatter, plot_bar — they are kind=...)
+     • mean / median / sum / count / min / max        → ONE `aggregate_table`, arg agg=...
+     • asc / desc, top-N                              → ONE `rank_top_n`, args order=, n=
+     • GET / POST, different endpoints                → ONE `call_rest_api`, args method=, url=
+   If two goals differ ONLY by such a knob, they MUST resolve to the same
+   capability with different args. Keep distinct verbs separate though:
+   aggregation (compute numbers) and plotting (draw a figure) are different verbs.
+
+   INVERSE — A DIFFERENT FUNCTION IS A DIFFERENT VERB, even in the same domain.
+   Reuse matches on FUNCTION, not on TOPIC/DOMAIN. Do NOT force a goal onto an
+   existing capability just because they share a subject. Example (football):
+   `fetch_standings`, `predict_match`, `fetch_squad`, `leaderboard` are FOUR
+   different verbs — "win probability for A vs B" is a PREDICTION, NOT a variation
+   of a standings table. If the only existing capability does a different function
+   than the goal needs, SYNTHESIZE A NEW general verb (needs_synthesis: true) —
+   never twist an unrelated capability to fit.
+3. Mark a step needs_synthesis: true ONLY when no existing capability's category
+   covers the goal. Prefer ONE general capability invoked with rich args over
+   several narrow ones.
 4. Keep the plan minimal — only steps genuinely needed to achieve the goal.
 5. Each step must have a capability name in snake_case.
-6. Args should be inferred from the goal context where possible. Do NOT invent
-   large data arguments — bulk data (e.g. dataset rows) is injected automatically.
+6. Args should be inferred from the goal context. When reusing a capability, pass
+   the full set of knobs its params list declares (e.g. kind, x, y, agg). Do NOT
+   invent large data arguments — bulk data (e.g. dataset rows) is injected
+   automatically.
+7. CRITICAL — DATA APP RULE: For goals like "build a weather app", "show a dashboard",
+   "display stock data", "create a chart", or any goal involving fetching + displaying
+   data, plan at MOST 2 steps: optionally reset_canvas + ONE synthesized capability
+   that does everything (fetch + compute + render). NEVER split into city_selector,
+   fetch_data, display_info, convert_units — those separate caps cannot share state
+   between sandbox executions. The single synthesized cap should accept parameters
+   like city, unit, symbol as args.
 
 You MUST respond with ONLY valid JSON. No prose. No markdown. No backticks.
 

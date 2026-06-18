@@ -1,0 +1,88 @@
+{
+  "name": "visualize_backpropagation",
+  "description": "Executes backpropagation step-by-step on a neural network and renders each phase (forward pass, backward deltas, weight updates) as animation frames.",
+  "version": "1.0.0",
+  "synthesized_at": 1781636139.2131011,
+  "id": "3c9a3359-0742-49b6-8dac-67943af253e6",
+  "spec": {
+    "jsonrpc": "2.0",
+    "method": "csp.capability.invoke",
+    "params": {
+      "capability_id": "visualize_backpropagation",
+      "version": "1.0.0",
+      "description": "Executes backpropagation step-by-step on a neural network and renders each phase (forward pass, backward deltas, weight updates) as animation frames.",
+      "kind": "synthesized",
+      "params_schema": {
+        "network": {
+          "type": "object",
+          "description": "Neural network structure with layers, each containing 'weights' (2D array) and 'bias' (1D array). Defaults to a 2→3→1 network.",
+          "required": false
+        },
+        "input": {
+          "type": "array",
+          "description": "Input feature vector (e.g., [1.0, 0.5]). Defaults to [1.0, 0.5].",
+          "required": false
+        },
+        "target": {
+          "type": "array",
+          "description": "Target output value (e.g., [0.8]). Defaults to [0.8].",
+          "required": false
+        },
+        "learning_rate": {
+          "type": "number",
+          "description": "Learning rate for weight updates. Defaults to 0.1.",
+          "required": false
+        }
+      },
+      "result_schema": {
+        "frames": {
+          "type": "array",
+          "description": "List of base64-encoded PNG images, one per algorithm step."
+        },
+        "step_count": {
+          "type": "number",
+          "description": "Total number of frames rendered."
+        },
+        "algorithm": {
+          "type": "string",
+          "description": "Algorithm name: 'Backpropagation'."
+        },
+        "input": {
+          "type": "array",
+          "description": "Input vector used."
+        },
+        "target": {
+          "type": "array",
+          "description": "Target output used."
+        },
+        "final_loss": {
+          "type": "number",
+          "description": "Mean squared error loss after forward pass."
+        },
+        "explanation_hint": {
+          "type": "string",
+          "description": "Color and visual legend for the animation."
+        }
+      },
+      "execution": {
+        "target": "python",
+        "transport": "stdio",
+        "entrypoint": "run",
+        "code": "def run(args):\n    import numpy as np\n    import matplotlib.pyplot as plt\n    import matplotlib.patches as mpatches\n    from matplotlib.patches import FancyBboxPatch, FancyArrowPatch\n    import io\n    import base64\n    \n    # ─────────────────────────────────────────────────────────────────\n    # Parse input: a simple neural network with weights and biases\n    # ─────────────────────────────────────────────────────────────────\n    \n    # Default: a tiny 2-layer network (2 inputs → 3 hidden → 1 output)\n    network = args.get('network', {\n        'layers': [\n            {'weights': [[0.5, -0.3], [0.2, 0.8], [-0.1, 0.6]], 'bias': [0.1, -0.2, 0.3]},\n            {'weights': [[0.4, -0.5, 0.2]], 'bias': [0.05]}\n        ]\n    })\n    \n    x_input = args.get('input', np.array([1.0, 0.5]))\n    y_target = args.get('target', np.array([0.8]))\n    learning_rate = args.get('learning_rate', 0.1)\n    \n    # Convert to numpy arrays\n    x_input = np.array(x_input, dtype=float)\n    y_target = np.array(y_target, dtype=float)\n    \n    # ─────────────────────────────────────────────────────────────────\n    # Initialize network state\n    # ─────────────────────────────────────────────────────────────────\n    \n    layers = []\n    for layer_def in network['layers']:\n        layer = {\n            'weights': np.array(layer_def['weights'], dtype=float),\n            'bias': np.array(layer_def['bias'], dtype=float),\n            'z': None,  # pre-activation\n            'a': None,  # post-activation\n            'delta': None,  # gradient w.r.t. z\n        }\n        layers.append(layer)\n    \n    frames = []\n    step_log = []\n    \n    # ─────────────────────────────────────────────────────────────────\n    # FORWARD PASS\n    # ─────────────────────────────────────────────────────────────────\n    \n    a = x_input\n    for i, layer in enumerate(layers):\n        z = np.dot(layer['weights'], a) + layer['bias']\n        a = 1.0 / (1.0 + np.exp(-np.clip(z, -500, 500)))  # sigmoid\n        layer['z'] = z\n        layer['a'] = a\n        step_log.append(f\"Forward: Layer {i+1} → z={z}, a={a}\")\n    \n    y_pred = a\n    loss = 0.5 * np.sum((y_pred - y_target) ** 2)\n    step_log.append(f\"Loss: {loss:.4f}\")\n    \n    # Render forward pass frame\n    fig = _render_network_state(layers, x_input, y_target, y_pred, \n                                 \"Forward Pass\", step_log[-1])\n    frames.append(_fig_to_base64(fig))\n    plt.close(fig)\n    \n    # ─────────────────────────────────────────────────────────────────\n    # BACKWARD PASS\n    # ─────────────────────────────────────────────────────────────────\n    \n    # Output layer gradient\n    delta = (y_pred - y_target) * y_pred * (1 - y_pred)  # sigmoid derivative\n    layers[-1]['delta'] = delta\n    step_log.append(f\"Backprop: Output layer delta={delta}\")\n    \n    fig = _render_network_state(layers, x_input, y_target, y_pred,\n                                 \"Backprop: Output Layer\", step_log[-1])\n    frames.append(_fig_to_base64(fig))\n    plt.close(fig)\n    \n    # Hidden layers\n    for i in range(len(layers) - 2, -1, -1):\n        # Propagate delta backward\n        delta = np.dot(layers[i+1]['weights'].T, delta) * layers[i]['a'] * (1 - layers[i]['a'])\n        layers[i]['delta'] = delta\n        step_log.append(f\"Backprop: Layer {i+1} delta={delta}\")\n        \n        fig = _render_network_state(layers, x_input, y_target, y_pred,\n                                     f\"Backprop: Layer {i+1}\", step_log[-1])\n        frames.append(_fig_to_base64(fig))\n        plt.close(fig)\n    \n    # ─────────────────────────────────────────────────────────────────\n    # WEIGHT UPDATE\n    # ─────────────────────────────────────────────────────────────────\n    \n    a = x_input\n    for i, layer in enumerate(layers):\n        # Gradient w.r.t. weights: delta ⊗ a_prev\n        dW = np.outer(layer['delta'], a)\n        db = layer['delta']\n        \n        # Update\n        layer['weights'] -= learning_rate * dW\n        layer['bias'] -= learning_rate * db\n        \n        step_log.append(f\"Update: Layer {i+1} weights & bias\")\n        \n        fig = _render_network_state(layers, x_input, y_target, y_pred,\n                                     f\"Weight Update: Layer {i+1}\", step_log[-1])\n        frames.append(_fig_to_base64(fig))\n        plt.close(fig)\n        \n        a = layer['a']\n    \n    # ─────────────────────────────────────────────────────────────────\n    # Return result\n    # ─────────────────────────────────────────────────────────────────\n    \n    return {\n        'frames': frames,\n        'step_count': len(frames),\n        'algorithm': 'Backpropagation',\n        'input': x_input.tolist(),\n        'target': y_target.tolist(),\n        'final_loss': float(loss),\n        'explanation_hint': 'Blue=input, Green=hidden activations, Red=output; arrows show weight flow; deltas propagate backward.'\n    }\n\n\ndef _render_network_state(layers, x_input, y_target, y_pred, title, subtitle):\n    \"\"\"Render a neural network diagram with current activations and deltas.\"\"\"\n    fig, ax = plt.subplots(figsize=(7, 4), dpi=100)\n    ax.set_xlim(-0.5, len(layers) + 1.5)\n    ax.set_ylim(-0.5, 4)\n    ax.axis('off')\n    \n    # Layer positions\n    layer_x = [0] + list(range(1, len(layers) + 1))\n    \n    # Draw input nodes\n    for j, val in enumerate(x_input):\n        y_pos = 2 - j * 0.8\n        circle = plt.Circle((layer_x[0], y_pos), 0.25, color='blue', alpha=0.7)\n        ax.add_patch(circle)\n        ax.text(layer_x[0], y_pos, f'{val:.2f}', ha='center', va='center', \n                fontsize=8, color='white', weight='bold')\n    \n    # Draw hidden and output nodes\n    for i, layer in enumerate(layers):\n        a = layer['a']\n        delta = layer['delta']\n        for j, (activation, grad) in enumerate(zip(a, delta if delta is not None else [None]*len(a))):\n            y_pos = 2 - j * 0.8\n            \n            # Color: green for activation, red tint if delta is large\n            if grad is not None:\n                intensity = min(abs(grad), 1.0)\n                color = (1.0, 1.0 - intensity, 1.0 - intensity)  # red tint\n            else:\n                color = 'green'\n            \n            circle = plt.Circle((layer_x[i+1], y_pos), 0.25, color=color, alpha=0.7)\n            ax.add_patch(circle)\n            ax.text(layer_x[i+1], y_pos, f'{activation:.2f}', ha='center', va='center',\n                    fontsize=8, color='white', weight='bold')\n    \n    # Draw connections (simplified)\n    for i in range(len(layers)):\n        n_prev = len(x_input) if i == 0 else len(layers[i-1]['a'])\n        n_curr = len(layers[i]['a'])\n        for j in range(min(n_prev, 2)):  # Draw only first 2 connections to avoid clutter\n            y_prev = 2 - j * 0.8\n            for k in range(min(n_curr, 2)):\n                y_curr = 2 - k * 0.8\n                ax.plot([layer_x[i] + 0.25, layer_x[i+1] - 0.25],\n                       [y_prev, y_curr], 'gray', alpha=0.3, linewidth=0.5)\n    \n    ax.text(0.5, 3.5, title, fontsize=12, weight='bold')\n    ax.text(0.5, 3.2, subtitle, fontsize=9, style='italic', color='gray')\n    ax.text(0.5, -0.3, f'Target: {y_target[0]:.2f} | Pred: {y_pred[0]:.2f}',\n            fontsize=9, color='darkblue')\n    \n    return fig\n\n\ndef _fig_to_base64(fig):\n    \"\"\"Convert matplotlib figure to base64 PNG string.\"\"\"\n    buf = io.BytesIO()\n    fig.savefig(buf, format='png', bbox_inches='tight', dpi=100)\n    buf.seek(0)\n    return base64.b64encode(buf.read()).decode('utf-8')",
+        "steps": [
+          "Initialize network with weights and biases from args or defaults",
+          "Execute forward pass: compute z and sigmoid activations layer by layer",
+          "Render forward pass frame showing input→hidden→output activations",
+          "Compute output layer delta: (pred - target) × sigmoid'(z)",
+          "Render output delta frame with red tint proportional to gradient magnitude",
+          "Backpropagate deltas through hidden layers using chain rule",
+          "Render each hidden layer delta frame",
+          "Update weights and biases using gradient descent",
+          "Render weight update frame for each layer",
+          "Return all frames as base64 PNGs with step count and loss"
+        ]
+      }
+    }
+  },
+  "credentials": []
+}

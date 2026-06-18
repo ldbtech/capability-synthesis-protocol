@@ -92,11 +92,12 @@ def test_assemble_spec_from_two_blocks():
         '"result_schema": {}, "steps": ["double"]}\n'
         "```"
     )
-    spec = _assemble_spec(raw, "double_it")
+    spec, credentials = _assemble_spec(raw, "double_it")
     params = spec["params"]
     assert params["capability_id"] == "double_it"
     assert params["execution"]["target"] == "python"
     assert "def run" in params["execution"]["code"]
+    assert credentials == []
 
 
 def test_extract_block_missing_returns_empty():
@@ -217,3 +218,38 @@ def test_planner_store_roundtrip(tmp_path):
 
     store.delete_capability("calc")
     assert store.load_capabilities() == []
+
+
+# ── Reuse: planner sees a synthesized capability's interface (params_schema) ───
+@pytest.mark.asyncio
+async def test_planner_summary_exposes_params_schema():
+    """A general capability is only reusable if the planner can see its knobs.
+    summary_for_planner() must surface params_schema so the planner can pass new
+    args to an existing capability instead of resynthesizing a near-duplicate."""
+    from csp.orchestrator.capability import SynthesizedCapability
+
+    app = Orchestrator("t", llm=FakeLLM(), planner_dir=None, credentials_dir=None)
+    spec = {
+        "jsonrpc": "2.0", "method": "csp.capability.invoke",
+        "params": {
+            "capability_id": "plot_chart",
+            "description": "Render any chart from tabular data",
+            "params_schema": {
+                "kind": {"type": "string"},
+                "x":    {"type": "string"},
+                "y":    {"type": "string"},
+            },
+            "execution": {"target": "python", "entrypoint": "run",
+                          "code": "def run(args):\n    return {'ok': True}"},
+        },
+    }
+    app._registry._synthesized["plot_chart"] = SynthesizedCapability(
+        name="plot_chart", spec=spec, description="Render any chart from tabular data"
+    )
+
+    summary = await app._registry.summary_for_planner()
+    assert "plot_chart" in summary
+    # The interface must be visible so the planner can reinvoke with new args.
+    assert "kind: string" in summary
+    assert "x: string" in summary
+    assert "y: string" in summary

@@ -124,8 +124,13 @@ class PythonSandbox:
         args: dict[str, Any],
         *,
         entrypoint: str = "run",
+        extra_env: Optional[dict[str, str]] = None,
     ) -> SandboxResult:
-        """Execute `code`, calling entrypoint(args), return a SandboxResult."""
+        """Execute `code`, calling entrypoint(args), return a SandboxResult.
+
+        extra_env: per-call env vars (e.g. API credentials) merged on top of
+                   self._env so concurrent calls don't interfere.
+        """
         loop = asyncio.get_event_loop()
         t0   = loop.time()
 
@@ -138,7 +143,7 @@ class PythonSandbox:
         # Inherit the parent environment (PATH, venv, etc.) and overlay the
         # app-provided extras. matplotlib & friends read these from os.environ.
         import os
-        sub_env = {**os.environ, **self._env}
+        sub_env = {**os.environ, **self._env, **(extra_env or {})}
 
         try:
             proc = await asyncio.create_subprocess_exec(

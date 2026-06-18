@@ -38,7 +38,8 @@ from typing import Any, Optional
 
 from ..llm.base import BaseLLM
 from .borrow import BorrowScope
-from .capability import AnyCapability, RegisteredCapability, capability_from_function
+from .capability import AnyCapability, RegisteredCapability, SynthesizedCapability, capability_from_function
+from .credentials import CredentialRequired, CredentialStore
 from .elicitation import ElicitationManager
 from .executor import Executor
 from .planner import Planner
@@ -82,6 +83,7 @@ class Orchestrator:
         synthesis_timeout: float = 30.0,
         elicitation_timeout: float = 120.0,
         planner_dir: Optional[str] = "planner",
+        credentials_dir: Optional[str] = "credentials",
         synthesis_guidance: str = "",
         sandbox_env: Optional[dict[str, str]] = None,
     ) -> None:
@@ -101,6 +103,7 @@ class Orchestrator:
         self._synthesizer = Synthesizer(llm, guidance=synthesis_guidance)
         self._planner     = Planner(llm, self._registry)
         self._sandbox     = PythonSandbox(env=sandbox_env)
+        self._cred_store  = CredentialStore(credentials_dir) if credentials_dir else None
 
         # Reload any capabilities synthesized in previous runs so we never
         # synthesize the same capability twice across restarts, and persist
@@ -191,6 +194,78 @@ class Orchestrator:
                 "steps": [s.capability for s in plan.steps],
             }
 
+            # ── Pre-synthesis pass ───────────────────────────────────────
+            # Synthesize any missing capabilities NOW (before execution) so
+            # we can inspect their credential requirements and ask the user
+            # before touching the sandbox.
+            for step in plan.steps:
+                # ── evolve__ built-in: patch an existing synthesized cap ──
+                if step.capability.startswith("evolve__"):
+                    target = step.capability[len("evolve__"):]
+                    instruction = step.args.get("instruction", goal)
+                    existing = self._registry._synthesized.get(target)
+                    if existing:
+                        yield {"type": "event", "kind": "LOG",
+                               "message": f"Evolving capability: {target}"}
+                        evolved = await self._synthesizer.evolve(existing, instruction)
+                        async with self._registry._lock:
+                            self._registry._synthesized[target] = evolved
+                        if self._store:
+                            self._store.save_capability(evolved)
+                        yield {"type": "event", "kind": "LOG",
+                               "message": f"Capability evolved: {target}"}
+                        # Replace the evolve__ step with the real target so it
+                        # gets re-executed with the updated code.
+                        step.capability = target
+                        step.needs_synthesis = False
+                        step.description = f"Re-run evolved capability: {target}"
+                    else:
+                        # Target not found — skip this step entirely
+                        step.capability = "__skip__"
+                    continue
+
+                if not self._registry.exists(step.capability):
+                    yield {"type": "event", "kind": "LOG",
+                           "message": f"Synthesizing capability: {step.capability}"}
+                    cap = await self._synthesizer.synthesize(
+                        step.capability, goal,
+                        context=f"existing capabilities: {list(self._registry._registered.keys()) + list(self._registry._synthesized.keys())}"
+                    )
+                    self._registry._synthesized[cap.name] = cap
+                    if self._store:
+                        self._store.save_capability(cap)
+                    step.needs_synthesis = False
+                    yield {"type": "event", "kind": "LOG",
+                           "message": f"Capability synthesized: {cap.name}"}
+
+            # ── Credential gate ──────────────────────────────────────────
+            # Collect every credential required by synthesized capabilities
+            # in this plan that isn't already in the store.
+            if self._cred_store:
+                missing: dict[str, dict] = {}
+                for step in plan.steps:
+                    cap = (self._registry._registered.get(step.capability)
+                           or self._registry._synthesized.get(step.capability))
+                    if isinstance(cap, SynthesizedCapability):
+                        for cred in cap.credentials:
+                            if not self._cred_store.has(cred["env_key"]):
+                                missing[cred["env_key"]] = cred
+
+                if missing:
+                    for cred in missing.values():
+                        yield {"type": "credential_required", **cred}
+                    yield {
+                        "type": "result",
+                        "status": "PENDING_CREDENTIALS",
+                        "summary": (
+                            f"Need {len(missing)} credential(s) to continue. "
+                            "Fill in the form and re-send your request."
+                        ),
+                        "output": {},
+                        "pending_goal": goal,
+                    }
+                    return
+
             executor = Executor(
                 registry=self._registry,
                 synthesizer=self._synthesizer,
@@ -198,6 +273,11 @@ class Orchestrator:
                 goal=goal,
                 sandbox=self._sandbox,
             )
+
+            # Inject all stored credentials into the sandbox env so synthesized
+            # code can reach them via os.environ["KEY"].
+            if self._cred_store:
+                self._sandbox._env.update(self._cred_store.as_env())
 
             result_payload: dict[str, Any] = {}
 
@@ -255,6 +335,53 @@ class Orchestrator:
             if ev.get("type") == "result":
                 final = {k: v for k, v in ev.items() if k != "type"}
         return final
+
+    async def evolve(self, name: str, instruction: str) -> "SynthesizedCapability":
+        """
+        Modify an existing synthesized capability based on a natural-language
+        instruction.  The existing code is passed to the LLM which patches only
+        what the instruction requires and returns the complete updated code.
+
+        The evolved capability replaces the old one in the registry and on disk.
+
+            evolved = await app.evolve(
+                "fetch_weather_data",
+                "also return humidity and UV index"
+            )
+
+        Raises KeyError if the capability doesn't exist or is registered (not
+        synthesized) — you can only evolve what CSP wrote itself.
+        """
+        cap = self._registry._synthesized.get(name)
+        if cap is None:
+            raise KeyError(
+                f"No synthesized capability {name!r} to evolve. "
+                "Only CSP-synthesized capabilities can be evolved."
+            )
+
+        evolved = await self._synthesizer.evolve(cap, instruction)
+
+        async with self._registry._lock:
+            self._registry._synthesized[name] = evolved
+        if self._store:
+            self._store.save_capability(evolved)
+
+        log.info("capability %r evolved: %s", name, instruction[:60])
+        return evolved
+
+    def provide_credential(self, env_key: str, value: str) -> None:
+        """
+        Store an API credential so synthesized capabilities can use it.
+
+        Called by the app server when the user submits the credential form.
+        The key is immediately persisted to disk and injected into the sandbox
+        env on the next goal submission.
+
+            app.provide_credential("OPENWEATHER_API_KEY", "abc123")
+        """
+        if self._cred_store is None:
+            raise RuntimeError("credentials_dir is disabled — pass credentials_dir= to Orchestrator")
+        self._cred_store.set(env_key, value)
 
     async def _invoke_resolved(self, cap: AnyCapability, args: dict[str, Any]) -> Any:
         """Run an already-resolved capability (registered fn or sandboxed code)."""

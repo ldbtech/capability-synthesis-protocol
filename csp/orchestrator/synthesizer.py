@@ -36,6 +36,28 @@ _SYNTHESIS_SYSTEM = """\
 You are the CSP capability synthesizer.
 You generate a capability as REAL, RUNNABLE Python plus a small metadata block.
 
+╔══════════════════════════════════════════════════════════════════════╗
+║ GENERALITY CONTRACT — THE MOST IMPORTANT RULE                          ║
+╚══════════════════════════════════════════════════════════════════════╝
+You are building a REUSABLE capability for an ENTIRE CLASS of tasks — NOT a
+one-off answer to the request that triggered this synthesis. The SAME capability
+will be invoked again later with DIFFERENT args, and it must work then too.
+
+- Read EVERY specific from `args`: column names, chart kind, group-by keys,
+  filters, thresholds, URLs, units, sort order. NEVER hardcode a value taken from
+  the current request into the code.
+- Design `params_schema` FIRST as the COMPLETE interface for the whole class.
+  A charting capability exposes kind, x, y, series, agg, title — not just the one
+  chart asked for now. An aggregation capability exposes group_by, metric, agg.
+- Provide sensible DEFAULTS via args.get(key, default) so the capability still
+  runs if a knob is omitted.
+- Litmus test: if asked to "plot average salary by department as a bar chart",
+  do NOT write code that only plots salary-by-department bars. Write a general
+  charting capability that reads kind/x/y/agg from args and would EQUALLY render
+  "age distribution as a histogram" on its next invocation without any change.
+- The capability NAME you were given is a general verb (plot_chart,
+  aggregate_table). Honor it — implement the whole verb, not the single instance.
+
 The code you write is executed in a sandboxed subprocess. It MUST define
 exactly one entrypoint:
 
@@ -51,17 +73,31 @@ Rules for the code:
 - You may use the Python standard library freely (math, re, statistics,
   datetime, csv, io, collections, etc.).
 - You may use pandas / numpy if helpful, but convert results to plain types.
-- Do NOT read files, make network calls, or use input(). Work only from `args`.
-- Keep it self-contained and deterministic. Handle missing keys gracefully.
+- You MAY make network/API calls using `requests` or `urllib` when the goal
+  requires real external data (weather, stock prices, images, etc.).
+- When your code needs an API key or token, read it from os.environ:
+      import os
+      key = os.environ["SERVICE_API_KEY"]
+  and declare it in the ##CREDENTIALS block (see format below).
+- Handle missing keys in `args` gracefully.
 
-Respond in EXACTLY this format — a python code block, then a json block.
-Nothing before, between (except a newline), or after them.
+Respond in EXACTLY this format:
 
 ```python
 def run(args):
     # real implementation
     return {...}
 ```
+
+If and ONLY IF the code needs external API credentials, add this block
+BETWEEN the python block and the json block:
+
+##CREDENTIALS
+ENV_VAR_NAME: Service Name · get at https://example.com/api-keys
+
+One line per credential. Format exactly as shown (ENV_VAR: Service · get at URL).
+Omit the ##CREDENTIALS block entirely if no credentials are needed.
+
 ```json
 {
   "description": "<one sentence>",
@@ -76,6 +112,24 @@ def run(args):
 ```
 
 Putting the code in its own block (not inside JSON) avoids escaping bugs.
+"""
+
+
+_EVOLVE_SYSTEM = """\
+You are the CSP capability evolver.
+You are given the CURRENT code of a synthesized capability and an instruction
+describing how to modify it.
+
+Rules:
+- Keep everything that works. Change only what the instruction requires.
+- The output must still define `def run(args): ... return {...}`.
+- Return the COMPLETE updated code (not a diff — the full function).
+- Same output format as synthesis: ```python block then optional ##CREDENTIALS
+  block then ```json block.
+- Update the description in the json block to reflect the changes.
+- If the modification adds a new credential requirement, add a ##CREDENTIALS
+  line. If an existing credential is no longer needed, remove it.
+- Do NOT add features beyond what the instruction asks for.
 """
 
 
@@ -126,7 +180,7 @@ class Synthesizer:
             Optional extra context (available resources, existing caps).
         """
         prompt = _build_prompt(capability_name, goal, context, self._guidance)
-        spec   = await self._generate_spec(prompt, capability_name)
+        spec, credentials = await self._generate_spec(prompt, capability_name)
 
         # Ensure capability_id matches what the planner asked for
         spec["params"]["capability_id"] = capability_name
@@ -136,10 +190,46 @@ class Synthesizer:
             spec=spec,
             description=spec["params"].get("description", ""),
             version=spec["params"].get("version", "1.0.0"),
+            credentials=credentials,
         )
 
         log.info("synthesized capability %r steps=%d", capability_name, len(cap.steps))
         return cap
+
+    async def evolve(
+        self,
+        cap: SynthesizedCapability,
+        instruction: str,
+    ) -> SynthesizedCapability:
+        """
+        Modify an existing synthesized capability in place.
+
+        Passes the current code + a natural-language instruction to the LLM,
+        which patches only what's needed and returns the complete updated code.
+        The evolved capability keeps the same name but gets a new version stamp.
+        """
+        prompt = (
+            f"Capability name: {cap.name!r}\n"
+            f"Current description: {cap.description}\n\n"
+            f"Current code:\n```python\n{cap.code}\n```\n\n"
+            f"Modification instruction: {instruction}\n\n"
+            "Apply the requested change. Return the full updated code."
+        )
+
+        spec, credentials = await self._generate_spec(
+            prompt, cap.name, system_override=_EVOLVE_SYSTEM
+        )
+        spec["params"]["capability_id"] = cap.name
+
+        evolved = SynthesizedCapability(
+            name=cap.name,
+            spec=spec,
+            description=spec["params"].get("description", cap.description),
+            version=cap.version,
+            credentials=credentials,
+        )
+        log.info("evolved capability %r: %s", cap.name, instruction[:60])
+        return evolved
 
     # ------------------------------------------------------------------
     # Internal
@@ -149,8 +239,10 @@ class Synthesizer:
         self,
         prompt: str,
         capability_name: str,
-    ) -> dict[str, Any]:
+        system_override: Optional[str] = None,
+    ) -> tuple[dict[str, Any], list[dict]]:
         """Call LLM and parse JSON, retrying on parse failure."""
+        system = system_override or _SYNTHESIS_SYSTEM
         last_error: Optional[Exception] = None
 
         for attempt in range(self._max_retries + 1):
@@ -163,13 +255,13 @@ class Synthesizer:
             try:
                 response = await self._llm.complete(
                     [LLMMessage(role="user", content=prompt)],
-                    system=_SYNTHESIS_SYSTEM,
-                    temperature=0.2,    # slight creativity for step descriptions
-                    max_tokens=8000,    # generated code can be long; don't truncate
+                    system=system,
+                    temperature=0.2,
+                    max_tokens=8000,
                 )
-                spec = _assemble_spec(response.content, capability_name)
+                spec, credentials = _assemble_spec(response.content, capability_name)
                 _validate_spec(spec)
-                return spec
+                return spec, credentials
 
             except (json.JSONDecodeError, ValueError, KeyError, SyntaxError) as exc:
                 last_error = exc
@@ -179,7 +271,7 @@ class Synthesizer:
             "synthesizer failed for %r after %d attempts, using fallback",
             capability_name, self._max_retries + 1,
         )
-        return _fallback_spec(capability_name)
+        return _fallback_spec(capability_name), []
 
 
 # ---------------------------------------------------------------------------
@@ -206,22 +298,29 @@ def _build_prompt(
     return "\n\n".join(parts)
 
 
-def _assemble_spec(raw: str, capability_name: str) -> dict[str, Any]:
+def _assemble_spec(raw: str, capability_name: str) -> tuple[dict[str, Any], list[dict]]:
     """
-    Parse the two-block response (```python ... ``` and ```json ... ```) and
-    assemble a full JSON-RPC 2.0 capability spec. Keeping code out of the JSON
-    string avoids the escaping bugs that break single-blob synthesis.
+    Parse the LLM response:
+      - ```python ... ```   — the executable code
+      - ##CREDENTIALS ...   — optional credential declarations (between blocks)
+      - ```json ... ```     — metadata (description, params_schema, steps, ...)
+
+    Returns (spec_dict, credentials_list).
+    Keeping code out of the JSON string avoids the escaping bugs that break
+    single-blob synthesis.
     """
     code = _extract_block(raw, "python")
     if not code:
         raise ValueError("synthesis response missing ```python code block")
+
+    credentials = _extract_credentials(raw)
 
     meta_raw = _extract_block(raw, "json")
     if not meta_raw:
         raise ValueError("synthesis response missing ```json metadata block")
     meta = json.loads(meta_raw)
 
-    return {
+    spec = {
         "jsonrpc": "2.0",
         "method": "csp.capability.invoke",
         "params": {
@@ -240,6 +339,51 @@ def _assemble_spec(raw: str, capability_name: str) -> dict[str, Any]:
             },
         },
     }
+    return spec, credentials
+
+
+def _extract_credentials(raw: str) -> list[dict]:
+    """
+    Parse an optional ##CREDENTIALS block from the LLM response.
+
+    Expected format (one line per credential):
+        ##CREDENTIALS
+        ENV_VAR_NAME: Service Name · get at https://example.com
+    """
+    creds: list[dict] = []
+    in_block = False
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if stripped == "##CREDENTIALS":
+            in_block = True
+            continue
+        if in_block:
+            if stripped.startswith("```") or stripped.startswith("##"):
+                break
+            if not stripped or stripped.startswith("#"):
+                continue
+            # ENV_VAR_NAME: Service · get at URL
+            if ":" in stripped:
+                env_key, rest = stripped.split(":", 1)
+                env_key = env_key.strip()
+                rest = rest.strip()
+                # parse "Service · get at URL"
+                service = rest
+                get_it_at = ""
+                if "get at" in rest.lower():
+                    parts = rest.lower().split("get at", 1)
+                    service = rest[: len(parts[0])].rstrip("·· ").strip()
+                    get_it_at = rest[len(parts[0]) + len("get at"):].strip()
+                    # Restore original case from raw rest
+                    idx = rest.lower().find("get at")
+                    get_it_at = rest[idx + len("get at"):].strip()
+                creds.append({
+                    "env_key":    env_key,
+                    "service":    service,
+                    "get_it_at":  get_it_at,
+                    "description": f"{service} API credential",
+                })
+    return creds
 
 
 def _extract_block(raw: str, lang: str) -> str:

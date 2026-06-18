@@ -1,0 +1,73 @@
+{
+  "name": "predict_match_outcome",
+  "description": "Predicts the win probability for a specified team in a World Cup match using an Elo-based model.",
+  "version": "1.0.0",
+  "synthesized_at": 1781635192.2709389,
+  "id": "fbd88c34-ff91-4aa9-a8c5-9f88485d090c",
+  "spec": {
+    "jsonrpc": "2.0",
+    "method": "csp.capability.invoke",
+    "params": {
+      "capability_id": "predict_match_outcome",
+      "version": "1.0.0",
+      "description": "Predicts the win probability for a specified team in a World Cup match using an Elo-based model.",
+      "kind": "synthesized",
+      "params_schema": {
+        "home_team": {
+          "type": "string",
+          "description": "Name of the home team (e.g., 'Argentina', 'France')",
+          "required": true
+        },
+        "away_team": {
+          "type": "string",
+          "description": "Name of the away team (e.g., 'Algeria', 'Brazil')",
+          "required": true
+        },
+        "match_date": {
+          "type": "string",
+          "description": "ISO date of the match (optional; used for future fixture lookup if needed)",
+          "required": false
+        }
+      },
+      "result_schema": {
+        "view": {
+          "type": "string",
+          "description": "Always 'stat' for this capability"
+        },
+        "title": {
+          "type": "string",
+          "description": "Heading showing the matchup"
+        },
+        "data": {
+          "type": "object",
+          "description": "Stat card with value (percentage), label, and sub (breakdown)"
+        },
+        "summary": {
+          "type": "string",
+          "description": "One sentence explaining the prediction method and result"
+        }
+      },
+      "execution": {
+        "target": "python",
+        "transport": "stdio",
+        "entrypoint": "run",
+        "code": "def run(args):\n    import os\n    import requests\n    import math\n    from collections import defaultdict\n    \n    # Read parameters with sensible defaults\n    home_team = args.get(\"home_team\", \"\").strip()\n    away_team = args.get(\"away_team\", \"\").strip()\n    match_date = args.get(\"match_date\", None)  # ISO format or None for next match\n    \n    # Validate inputs\n    if not home_team or not away_team:\n        return {\n            \"view\": \"stat\",\n            \"title\": \"Match Prediction\",\n            \"data\": {\"value\": \"—\", \"label\": \"Error\", \"sub\": \"home_team and away_team required\"},\n            \"summary\": \"Missing team names. Provide home_team and away_team in args.\"\n        }\n    \n    api_key = os.environ.get(\"FOOTBALL_DATA_API_KEY\", \"\")\n    if not api_key:\n        return {\n            \"view\": \"stat\",\n            \"title\": \"Match Prediction\",\n            \"data\": {\"value\": \"—\", \"label\": \"Error\", \"sub\": \"API key not configured\"},\n            \"summary\": \"football-data.org API key not found. Configure FOOTBALL_DATA_API_KEY.\"\n        }\n    \n    headers = {\"X-Auth-Token\": api_key}\n    \n    try:\n        # Fetch standings to get team stats and FIFA rankings (via points/form)\n        standings_resp = requests.get(\n            \"https://api.football-data.org/v4/competitions/WC/standings\",\n            headers=headers,\n            timeout=20\n        )\n        standings_resp.raise_for_status()\n        standings_data = standings_resp.json()\n        \n        # Fetch recent matches for form analysis\n        matches_resp = requests.get(\n            \"https://api.football-data.org/v4/competitions/WC/matches?status=FINISHED\",\n            headers=headers,\n            timeout=20\n        )\n        matches_resp.raise_for_status()\n        matches_data = matches_resp.json()\n        \n    except requests.RequestException as e:\n        return {\n            \"view\": \"stat\",\n            \"title\": \"Match Prediction\",\n            \"data\": {\"value\": \"—\", \"label\": \"Error\", \"sub\": str(e)},\n            \"summary\": f\"Failed to fetch World Cup data: {e}\"\n        }\n    \n    # Extract team stats from standings\n    team_stats = {}\n    for group in standings_data.get(\"standings\", []):\n        for team_row in group.get(\"table\", []):\n            team_name = team_row[\"team\"][\"name\"]\n            team_stats[team_name] = {\n                \"played\": team_row.get(\"playedGames\", 0),\n                \"won\": team_row.get(\"won\", 0),\n                \"draw\": team_row.get(\"draw\", 0),\n                \"lost\": team_row.get(\"lost\", 0),\n                \"gf\": team_row.get(\"goalsFor\", 0),\n                \"ga\": team_row.get(\"goalsAgainst\", 0),\n                \"gd\": team_row.get(\"goalDifference\", 0),\n                \"points\": team_row.get(\"points\", 0)\n            }\n    \n    # Normalize team names (handle common variations)\n    def normalize_name(name):\n        name = name.lower().strip()\n        aliases = {\n            \"algeria\": \"algeria\",\n            \"argentina\": \"argentina\",\n            \"france\": \"france\",\n            \"brazil\": \"brazil\",\n            \"germany\": \"germany\",\n            \"spain\": \"spain\",\n            \"england\": \"england\",\n            \"netherlands\": \"netherlands\",\n            \"belgium\": \"belgium\",\n            \"italy\": \"italy\",\n            \"portugal\": \"portugal\",\n            \"mexico\": \"mexico\",\n            \"usa\": \"united states\",\n            \"united states\": \"united states\",\n            \"japan\": \"japan\",\n            \"south korea\": \"south korea\",\n            \"korea\": \"south korea\",\n            \"australia\": \"australia\",\n            \"senegal\": \"senegal\",\n            \"poland\": \"poland\",\n            \"croatia\": \"croatia\",\n            \"morocco\": \"morocco\",\n            \"switzerland\": \"switzerland\",\n            \"uruguay\": \"uruguay\",\n            \"ecuador\": \"ecuador\",\n            \"iran\": \"iran\",\n            \"qatar\": \"qatar\",\n            \"saudi arabia\": \"saudi arabia\",\n            \"wales\": \"wales\",\n            \"scotland\": \"scotland\",\n            \"denmark\": \"denmark\",\n            \"sweden\": \"sweden\",\n            \"finland\": \"finland\",\n            \"norway\": \"norway\",\n            \"serbia\": \"serbia\",\n            \"greece\": \"greece\",\n            \"czechia\": \"czechia\",\n            \"czech republic\": \"czechia\",\n            \"hungary\": \"hungary\",\n            \"romania\": \"romania\",\n            \"bulgaria\": \"bulgaria\",\n            \"slovenia\": \"slovenia\",\n            \"slovakia\": \"slovakia\",\n            \"ukraine\": \"ukraine\",\n            \"russia\": \"russia\",\n            \"turkey\": \"turkey\",\n            \"israel\": \"israel\",\n            \"egypt\": \"egypt\",\n            \"cameroon\": \"cameroon\",\n            \"ghana\": \"ghana\",\n            \"ivory coast\": \"ivory coast\",\n            \"côte d'ivoire\": \"ivory coast\",\n            \"tunisia\": \"tunisia\",\n            \"mali\": \"mali\",\n            \"burkina faso\": \"burkina faso\",\n            \"benin\": \"benin\",\n            \"congo\": \"congo\",\n            \"nigeria\": \"nigeria\",\n            \"south africa\": \"south africa\",\n            \"kenya\": \"kenya\",\n            \"uganda\": \"uganda\",\n            \"zambia\": \"zambia\",\n            \"zimbabwe\": \"zimbabwe\",\n            \"costa rica\": \"costa rica\",\n            \"panama\": \"panama\",\n            \"honduras\": \"honduras\",\n            \"jamaica\": \"jamaica\",\n            \"haiti\": \"haiti\",\n            \"trinidad and tobago\": \"trinidad and tobago\",\n            \"canada\": \"canada\",\n            \"colombia\": \"colombia\",\n            \"peru\": \"peru\",\n            \"chile\": \"chile\",\n            \"paraguay\": \"paraguay\",\n            \"venezuela\": \"venezuela\",\n            \"bolivia\": \"bolivia\",\n            \"thailand\": \"thailand\",\n            \"vietnam\": \"vietnam\",\n            \"indonesia\": \"indonesia\",\n            \"malaysia\": \"malaysia\",\n            \"singapore\": \"singapore\",\n            \"philippines\": \"philippines\",\n            \"india\": \"india\",\n            \"pakistan\": \"pakistan\",\n            \"bangladesh\": \"bangladesh\",\n            \"sri lanka\": \"sri lanka\",\n            \"afghanistan\": \"afghanistan\",\n            \"uzbekistan\": \"uzbekistan\",\n            \"kazakhstan\": \"kazakhstan\",\n            \"tajikistan\": \"tajikistan\",\n            \"kyrgyzstan\": \"kyrgyzstan\",\n            \"turkmenistan\": \"turkmenistan\",\n            \"azerbaijan\": \"azerbaijan\",\n            \"georgia\": \"georgia\",\n            \"armenia\": \"armenia\",\n            \"lebanon\": \"lebanon\",\n            \"jordan\": \"jordan\",\n            \"palestine\": \"palestine\",\n            \"iraq\": \"iraq\",\n            \"syria\": \"syria\",\n            \"yemen\": \"yemen\",\n            \"oman\": \"oman\",\n            \"uae\": \"united arab emirates\",\n            \"united arab emirates\": \"united arab emirates\",\n            \"bahrain\": \"bahrain\",\n            \"qatar\": \"qatar\",\n            \"kuwait\": \"kuwait\",\n            \"new zealand\": \"new zealand\",\n            \"fiji\": \"fiji\",\n            \"samoa\": \"samoa\",\n            \"vanuatu\": \"vanuatu\",\n            \"solomon islands\": \"solomon islands\",\n            \"tonga\": \"tonga\",\n            \"kiribati\": \"kiribati\",\n            \"nauru\": \"nauru\",\n            \"palau\": \"palau\",\n            \"marshall islands\": \"marshall islands\",\n            \"micronesia\": \"micronesia\",\n            \"tuvalu\": \"tuvalu\",\n        }\n        return aliases.get(name, name)\n    \n    home_norm = normalize_name(home_team)\n    away_norm = normalize_name(away_team)\n    \n    # Find matching teams in standings\n    home_data = None\n    away_data = None\n    for team_name, stats in team_stats.items():\n        if normalize_name(team_name) == home_norm:\n            home_data = stats\n            home_actual_name = team_name\n        if normalize_name(team_name) == away_norm:\n            away_data = stats\n            away_actual_name = team_name\n    \n    if not home_data or not away_data:\n        missing = []\n        if not home_data:\n            missing.append(home_team)\n        if not away_data:\n            missing.append(away_team)\n        return {\n            \"view\": \"stat\",\n            \"title\": \"Match Prediction\",\n            \"data\": {\"value\": \"—\", \"label\": \"Teams not found\", \"sub\": \", \".join(missing)},\n            \"summary\": f\"Could not find team data for: {', '.join(missing)}. Check team names.\"\n        }\n    \n    # Build a simple Elo-based prediction model\n    # Start with base Elo of 1600, adjust by points and goal difference\n    def estimate_elo(team_stats):\n        base_elo = 1600\n        # Points are a proxy for strength: each point ≈ ~10 Elo\n        elo = base_elo + (team_stats[\"points\"] * 10)\n        # Goal difference adds nuance\n        elo += team_stats[\"gd\"] * 5\n        return elo\n    \n    home_elo = estimate_elo(home_data)\n    away_elo = estimate_elo(away_data)\n    \n    # Elo win probability formula\n    def elo_win_prob(elo_a, elo_b):\n        return 1.0 / (1.0 + math.pow(10, (elo_b - elo_a) / 400.0))\n    \n    home_win_prob = elo_win_prob(home_elo, away_elo)\n    away_win_prob = 1.0 - home_win_prob\n    \n    # Expected goals model (simple: based on points and GF/GA ratio)\n    home_xg = 1.5 + (home_data[\"points\"] / 10.0) if home_data[\"played\"] > 0 else 1.5\n    away_xg = 1.5 + (away_data[\"points\"] / 10.0) if away_data[\"played\"] > 0 else 1.5\n    \n    # Determine which team is being asked about (for the summary)\n    query_team = away_team  # Default to away team (Algeria in the example)\n    query_team_prob = away_win_prob\n    \n    # Format result\n    percentage = round(query_team_prob * 100, 1)\n    \n    return {\n        \"view\": \"stat\",\n        \"title\": f\"Match Prediction: {home_actual_name} vs {away_actual_name}\",\n        \"data\": {\n            \"value\": f\"{percentage}%\",\n            \"label\": f\"Win probability for {away_actual_name}\",\n            \"sub\": f\"Home: {round(home_win_prob*100, 1)}% | Away: {round(away_win_prob*100, 1)}%\"\n        },\n        \"summary\": f\"{away_actual_name} has a {percentage}% chance of winning against {home_actual_name} based on Elo rating (home: {home_elo:.0f}, away: {away_elo:.0f}) derived from tournament points and goal difference.\"\n    }",
+        "steps": [
+          "Fetch World Cup standings from football-data.org to extract team stats",
+          "Normalize team names and locate both teams in the standings",
+          "Calculate Elo ratings based on points and goal difference",
+          "Apply Elo win probability formula to compute match outcome odds",
+          "Return win percentage for the away team with confidence breakdown"
+        ]
+      }
+    }
+  },
+  "credentials": [
+    {
+      "env_key": "FOOTBALL_DATA_API_KEY",
+      "service": "football-data.org",
+      "get_it_at": "https://www.football-data.org/client/register",
+      "description": "football-data.org API credential"
+    }
+  ]
+}

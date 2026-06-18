@@ -1,0 +1,112 @@
+{
+  "name": "plot_chart",
+  "description": "Render a chart (bar, line, scatter, histogram, etc.) from tabular data with configurable aggregation and grouping.",
+  "version": "1.0.0",
+  "synthesized_at": 1781578129.990113,
+  "id": "c973bfc0-2e38-4444-a188-4779c0af6e9f",
+  "spec": {
+    "jsonrpc": "2.0",
+    "method": "csp.capability.invoke",
+    "params": {
+      "capability_id": "plot_chart",
+      "version": "1.0.0",
+      "description": "Render a chart (bar, line, scatter, histogram, etc.) from tabular data with configurable aggregation and grouping.",
+      "kind": "synthesized",
+      "params_schema": {
+        "rows": {
+          "type": "array",
+          "description": "List of dict rows from the dataset",
+          "required": true
+        },
+        "columns": {
+          "type": "array",
+          "description": "List of column names in the dataset",
+          "required": true
+        },
+        "kind": {
+          "type": "string",
+          "description": "Chart type: 'bar', 'line', 'barh', 'scatter', 'histogram'",
+          "required": false
+        },
+        "x": {
+          "type": "string",
+          "description": "Column name for x-axis or grouping variable",
+          "required": false
+        },
+        "y": {
+          "type": "string",
+          "description": "Column name for y-axis or metric to aggregate",
+          "required": false
+        },
+        "series": {
+          "type": "string",
+          "description": "Optional column name for multi-series (different colors/lines)",
+          "required": false
+        },
+        "agg": {
+          "type": "string",
+          "description": "Aggregation function: 'mean', 'sum', 'count', 'median', 'min', 'max'",
+          "required": false
+        },
+        "title": {
+          "type": "string",
+          "description": "Chart title",
+          "required": false
+        },
+        "xlabel": {
+          "type": "string",
+          "description": "X-axis label",
+          "required": false
+        },
+        "ylabel": {
+          "type": "string",
+          "description": "Y-axis label",
+          "required": false
+        }
+      },
+      "result_schema": {
+        "image_base64": {
+          "type": "string",
+          "description": "Base64-encoded PNG image of the chart"
+        },
+        "chart_kind": {
+          "type": "string",
+          "description": "The chart type rendered"
+        },
+        "x_column": {
+          "type": "string",
+          "description": "Column used for x-axis"
+        },
+        "y_column": {
+          "type": "string",
+          "description": "Column used for y-axis/metric"
+        },
+        "aggregation": {
+          "type": "string",
+          "description": "Aggregation function applied"
+        },
+        "rows_plotted": {
+          "type": "number",
+          "description": "Number of rows included in the chart after cleaning"
+        }
+      },
+      "execution": {
+        "target": "python",
+        "transport": "stdio",
+        "entrypoint": "run",
+        "code": "def run(args):\n    import pandas as pd\n    import matplotlib.pyplot as plt\n    import io\n    import base64\n    from collections import defaultdict\n    \n    # Extract inputs\n    rows = args.get('rows', [])\n    columns = args.get('columns', [])\n    \n    # Chart configuration (general parameters for any chart)\n    chart_kind = args.get('kind', 'bar')  # bar, line, scatter, histogram, box, etc.\n    x_col = args.get('x', None)\n    y_col = args.get('y', None)\n    series_col = args.get('series', None)\n    agg_func = args.get('agg', 'mean')  # mean, sum, count, median, etc.\n    title = args.get('title', None)\n    xlabel = args.get('xlabel', None)\n    ylabel = args.get('ylabel', None)\n    \n    # For this specific invocation: default to salary by department\n    if not x_col:\n        x_col = args.get('group_by', 'department')\n    if not y_col:\n        y_col = args.get('metric', 'salary')\n    if not title:\n        title = args.get('title', f'{agg_func.capitalize()} {y_col} by {x_col}')\n    if not ylabel:\n        ylabel = f'{agg_func.capitalize()} {y_col}'\n    if not xlabel:\n        xlabel = x_col\n    \n    # Validate columns exist\n    if x_col not in columns or y_col not in columns:\n        return {\n            'error': f'Column not found. Available: {columns}',\n            'image_base64': None\n        }\n    \n    # Convert to DataFrame for easier aggregation\n    df = pd.DataFrame(rows)\n    \n    # Clean and parse numeric values defensively\n    def parse_numeric(val):\n        if pd.isna(val):\n            return None\n        if isinstance(val, (int, float)):\n            return float(val)\n        if isinstance(val, str):\n            # Remove currency symbols, commas, units\n            cleaned = val.replace('$', '').replace(',', '').replace('kms', '').strip()\n            try:\n                return float(cleaned)\n            except ValueError:\n                return None\n        return None\n    \n    df[y_col] = df[y_col].apply(parse_numeric)\n    \n    # Remove rows with missing values in key columns\n    df = df.dropna(subset=[x_col, y_col])\n    \n    # Aggregate by x_col using specified function\n    agg_map = {\n        'mean': 'mean',\n        'sum': 'sum',\n        'count': 'count',\n        'median': 'median',\n        'min': 'min',\n        'max': 'max'\n    }\n    agg_method = agg_map.get(agg_func, 'mean')\n    \n    if series_col and series_col in columns:\n        # Multi-series aggregation\n        grouped = df.groupby([x_col, series_col])[y_col].agg(agg_method).reset_index()\n        pivot_data = grouped.pivot(index=x_col, columns=series_col, values=y_col)\n        plot_data = pivot_data\n    else:\n        # Single series aggregation\n        plot_data = df.groupby(x_col)[y_col].agg(agg_method).sort_values(ascending=False)\n    \n    # Create figure\n    fig, ax = plt.subplots(figsize=(10, 6))\n    \n    # Plot based on chart kind\n    if chart_kind == 'bar':\n        if isinstance(plot_data, pd.DataFrame):\n            plot_data.plot(kind='bar', ax=ax)\n        else:\n            plot_data.plot(kind='bar', ax=ax, color='steelblue')\n    elif chart_kind == 'line':\n        if isinstance(plot_data, pd.DataFrame):\n            plot_data.plot(kind='line', ax=ax, marker='o')\n        else:\n            plot_data.plot(kind='line', ax=ax, marker='o', color='steelblue')\n    elif chart_kind == 'barh':\n        if isinstance(plot_data, pd.DataFrame):\n            plot_data.plot(kind='barh', ax=ax)\n        else:\n            plot_data.plot(kind='barh', ax=ax, color='steelblue')\n    elif chart_kind == 'scatter':\n        ax.scatter(df[x_col], df[y_col], alpha=0.6, s=50)\n    elif chart_kind == 'histogram':\n        ax.hist(df[y_col].dropna(), bins=20, color='steelblue', edgecolor='black')\n    else:\n        # Default to bar\n        if isinstance(plot_data, pd.DataFrame):\n            plot_data.plot(kind='bar', ax=ax)\n        else:\n            plot_data.plot(kind='bar', ax=ax, color='steelblue')\n    \n    # Labels and title\n    ax.set_title(title, fontsize=14, fontweight='bold')\n    ax.set_xlabel(xlabel, fontsize=12)\n    ax.set_ylabel(ylabel, fontsize=12)\n    ax.grid(axis='y', alpha=0.3)\n    \n    if chart_kind == 'bar' or chart_kind == 'barh':\n        plt.xticks(rotation=45, ha='right')\n    \n    plt.tight_layout()\n    \n    # Save to base64\n    buf = io.BytesIO()\n    fig.savefig(buf, format='png', dpi=100, bbox_inches='tight')\n    buf.seek(0)\n    image_base64 = base64.b64encode(buf.read()).decode('utf-8')\n    plt.close(fig)\n    \n    return {\n        'image_base64': image_base64,\n        'chart_kind': chart_kind,\n        'x_column': x_col,\n        'y_column': y_col,\n        'aggregation': agg_func,\n        'rows_plotted': len(df)\n    }",
+        "steps": [
+          "Extract rows, columns, and chart configuration from args",
+          "Parse numeric values defensively (remove currency symbols, commas, units)",
+          "Remove rows with missing values in key columns",
+          "Aggregate y-column by x-column using specified function (mean/sum/count/etc.)",
+          "Handle multi-series grouping if series_col is provided",
+          "Render chart using matplotlib with appropriate kind (bar/line/scatter/histogram)",
+          "Apply title, axis labels, and formatting",
+          "Save figure to PNG, base64-encode, and return"
+        ]
+      }
+    }
+  },
+  "credentials": []
+}

@@ -145,6 +145,9 @@ class SynthesizedCapability:
     kind:          CapabilityKind             = CapabilityKind.SYNTHESIZED
     synthesized_at: float                     = field(default_factory=time.time)
     id:            str                        = field(default_factory=lambda: str(uuid.uuid4()))
+    # Credentials this capability needs injected as env vars before running.
+    # Each entry: {"env_key": str, "service": str, "get_it_at": str, "description": str}
+    credentials:   list                       = field(default_factory=list)
 
     @property
     def _execution(self) -> dict[str, Any]:

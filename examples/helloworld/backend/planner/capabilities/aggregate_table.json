@@ -1,0 +1,120 @@
+{
+  "name": "aggregate_table",
+  "description": "Aggregates tabular data by a grouping column using a specified function (mean, sum, count, median, min, max) and renders the result as a bar/line/barh chart.",
+  "version": "1.0.0",
+  "synthesized_at": 1781578117.4142048,
+  "id": "63864ea2-aaa8-430a-b300-9de5e964c2e8",
+  "spec": {
+    "jsonrpc": "2.0",
+    "method": "csp.capability.invoke",
+    "params": {
+      "capability_id": "aggregate_table",
+      "version": "1.0.0",
+      "description": "Aggregates tabular data by a grouping column using a specified function (mean, sum, count, median, min, max) and renders the result as a bar/line/barh chart.",
+      "kind": "synthesized",
+      "params_schema": {
+        "rows": {
+          "type": "array",
+          "description": "List of dict rows from the dataset",
+          "required": true
+        },
+        "columns": {
+          "type": "array",
+          "description": "List of column names in the dataset",
+          "required": true
+        },
+        "group_by": {
+          "type": "string",
+          "description": "Column name to group by (e.g., 'department')",
+          "required": true
+        },
+        "metric": {
+          "type": "string",
+          "description": "Column name containing numeric values to aggregate (e.g., 'salary')",
+          "required": true
+        },
+        "agg_func": {
+          "type": "string",
+          "description": "Aggregation function: 'mean', 'sum', 'count', 'median', 'min', 'max'",
+          "required": false
+        },
+        "chart_kind": {
+          "type": "string",
+          "description": "Chart type: 'bar', 'barh', 'line'",
+          "required": false
+        },
+        "title": {
+          "type": "string",
+          "description": "Chart title (auto-generated if omitted)",
+          "required": false
+        },
+        "x_label": {
+          "type": "string",
+          "description": "X-axis label",
+          "required": false
+        },
+        "y_label": {
+          "type": "string",
+          "description": "Y-axis label",
+          "required": false
+        },
+        "sort_by": {
+          "type": "string",
+          "description": "Sort results by 'key' or 'value'",
+          "required": false
+        },
+        "sort_order": {
+          "type": "string",
+          "description": "'ascending' or 'descending'",
+          "required": false
+        }
+      },
+      "result_schema": {
+        "aggregated_data": {
+          "type": "object",
+          "description": "Dictionary mapping group keys to aggregated values"
+        },
+        "image_base64": {
+          "type": "string",
+          "description": "Base64-encoded PNG chart image"
+        },
+        "chart_kind": {
+          "type": "string",
+          "description": "The chart type rendered"
+        },
+        "group_by": {
+          "type": "string",
+          "description": "The grouping column used"
+        },
+        "metric": {
+          "type": "string",
+          "description": "The metric column aggregated"
+        },
+        "agg_func": {
+          "type": "string",
+          "description": "The aggregation function applied"
+        },
+        "error": {
+          "type": "string",
+          "description": "Error message if aggregation failed"
+        }
+      },
+      "execution": {
+        "target": "python",
+        "transport": "stdio",
+        "entrypoint": "run",
+        "code": "def run(args):\n    import pandas as pd\n    import matplotlib.pyplot as plt\n    import io\n    import base64\n    from collections import defaultdict\n    \n    # Extract inputs\n    rows = args.get('rows', [])\n    columns = args.get('columns', [])\n    \n    # Aggregation parameters\n    group_by = args.get('group_by', None)  # e.g., 'department'\n    metric = args.get('metric', None)       # e.g., 'salary'\n    agg_func = args.get('agg_func', 'mean') # e.g., 'mean', 'sum', 'count', 'median'\n    \n    # Chart parameters\n    chart_kind = args.get('chart_kind', 'bar')  # bar, line, barh, etc.\n    title = args.get('title', None)\n    x_label = args.get('x_label', group_by or 'Group')\n    y_label = args.get('y_label', f'{agg_func.capitalize()} {metric}' if metric else 'Value')\n    sort_by = args.get('sort_by', None)  # 'value' or 'key' or None\n    sort_order = args.get('sort_order', 'descending')  # 'ascending' or 'descending'\n    \n    # Validate inputs\n    if not rows or not group_by or not metric:\n        return {\n            'error': 'Missing required parameters: rows, group_by, metric',\n            'image_base64': None\n        }\n    \n    if group_by not in columns or metric not in columns:\n        return {\n            'error': f'Column not found. Available: {columns}',\n            'image_base64': None\n        }\n    \n    # Parse and aggregate data\n    aggregated = defaultdict(list)\n    \n    for row in rows:\n        group_key = row.get(group_by)\n        metric_val = row.get(metric)\n        \n        if group_key is None or metric_val is None:\n            continue\n        \n        # Clean metric value: remove currency symbols, commas, units\n        metric_str = str(metric_val).strip()\n        metric_str = metric_str.replace('$', '').replace(',', '').replace('kms', '').strip()\n        \n        try:\n            metric_num = float(metric_str)\n            aggregated[str(group_key)].append(metric_num)\n        except (ValueError, TypeError):\n            continue\n    \n    if not aggregated:\n        return {\n            'error': 'No valid data to aggregate',\n            'image_base64': None\n        }\n    \n    # Compute aggregation\n    result = {}\n    for group_key, values in aggregated.items():\n        if agg_func == 'mean':\n            result[group_key] = sum(values) / len(values)\n        elif agg_func == 'sum':\n            result[group_key] = sum(values)\n        elif agg_func == 'count':\n            result[group_key] = len(values)\n        elif agg_func == 'median':\n            sorted_vals = sorted(values)\n            n = len(sorted_vals)\n            result[group_key] = sorted_vals[n // 2] if n % 2 == 1 else (sorted_vals[n // 2 - 1] + sorted_vals[n // 2]) / 2\n        elif agg_func == 'min':\n            result[group_key] = min(values)\n        elif agg_func == 'max':\n            result[group_key] = max(values)\n        else:\n            result[group_key] = sum(values) / len(values)  # default to mean\n    \n    # Sort if requested\n    if sort_by == 'value':\n        result = dict(sorted(result.items(), key=lambda x: x[1], reverse=(sort_order == 'descending')))\n    elif sort_by == 'key':\n        result = dict(sorted(result.items(), key=lambda x: x[0], reverse=(sort_order == 'descending')))\n    \n    # Create chart\n    fig, ax = plt.subplots(figsize=(10, 6))\n    \n    keys = list(result.keys())\n    values = list(result.values())\n    \n    if chart_kind == 'barh':\n        ax.barh(keys, values, color='steelblue')\n        ax.set_xlabel(y_label)\n        ax.set_ylabel(x_label)\n    else:  # default to 'bar'\n        ax.bar(keys, values, color='steelblue')\n        ax.set_xlabel(x_label)\n        ax.set_ylabel(y_label)\n        plt.xticks(rotation=45, ha='right')\n    \n    if title:\n        ax.set_title(title)\n    else:\n        ax.set_title(f'{agg_func.capitalize()} {metric} by {group_by}')\n    \n    plt.tight_layout()\n    \n    # Encode to base64\n    buf = io.BytesIO()\n    fig.savefig(buf, format='png', dpi=100, bbox_inches='tight')\n    buf.seek(0)\n    image_base64 = base64.b64encode(buf.read()).decode('utf-8')\n    plt.close(fig)\n    \n    return {\n        'aggregated_data': result,\n        'image_base64': image_base64,\n        'chart_kind': chart_kind,\n        'group_by': group_by,\n        'metric': metric,\n        'agg_func': agg_func\n    }",
+        "steps": [
+          "Validate group_by and metric columns exist in dataset",
+          "Parse metric values defensively (strip currency, commas, units)",
+          "Group rows by group_by column and collect metric values",
+          "Apply aggregation function (mean/sum/count/median/min/max) to each group",
+          "Sort results by key or value if requested",
+          "Render bar/barh/line chart with matplotlib",
+          "Encode chart as base64 PNG and return with aggregated data"
+        ]
+      }
+    }
+  },
+  "credentials": []
+}
