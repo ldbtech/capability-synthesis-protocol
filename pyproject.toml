@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "csp-sdk"
-version = "0.1.0"
+version = "0.1b0"
 description = "Capability Synthesis Protocol — build AI orchestrators that plan, execute, and synthesize capabilities at runtime."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -12,7 +12,7 @@ requires-python = ">=3.11"
 authors = [{ name = "alidaho" }]
 keywords = ["ai", "llm", "orchestration", "mcp", "agents", "anthropic"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
@@ -23,25 +23,31 @@ classifiers = [
 ]
 dependencies = [
     "anthropic>=0.40.0",
+    "aiohttp>=3.9",
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=8.0",
-    "pytest-asyncio>=0.23",
-    "hatchling",
-]
 # Framework adapters — install only what you use:
-#   pip install "csp-sdk[langgraph]"
+#   uv pip install "csp-sdk[langgraph]"   (or: pip install ...)
 langgraph = [
     "langgraph>=0.2",
     "langchain-core>=0.3",
 ]
 
+# Dev tooling lives in a uv dependency group — not shipped to PyPI, not an extra.
+#   uv sync            → lib + this group (default)
+#   uv sync --no-dev   → runtime deps only
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "hatchling",
+]
+
 [project.urls]
-Homepage = "https://github.com/ldbtech/csp"
-Repository = "https://github.com/ldbtech/csp"
-Issues = "https://github.com/ldbtech/csp/issues"
+Homepage = "https://github.com/ldbtech/capability-synthesis-protocol"
+Repository = "https://github.com/ldbtech/capability-synthesis-protocol"
+Issues = "https://github.com/ldbtech/capability-synthesis-protocol/issues"
 
 # Only the importable library ships in the distributions — the demo apps
 # (helloworld/, algoviz/), tests, and examples are excluded.
@@ -49,7 +55,9 @@ Issues = "https://github.com/ldbtech/csp/issues"
 packages = ["csp"]
 
 [tool.hatch.build.targets.sdist]
-include = [
+# only-include is a strict whitelist — keeps examples/, tests/, node_modules,
+# credentials, and dist/ out of the published source distribution.
+only-include = [
     "csp",
     "README.md",
     "LICENSE",

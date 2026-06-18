@@ -8,18 +8,24 @@ You register Python functions as capabilities and submit natural-language goals.
 
 ## Install
 
+This project is managed with [uv](https://docs.astral.sh/uv/). Install uv once
+(`curl -LsSf https://astral.sh/uv/install.sh | sh`), then:
+
 ```bash
 git clone https://github.com/ldbtech/capability-synthesis-protocol
 cd csp
-pip install -e .
+uv sync                          # core lib + dev tools, into .venv
 ```
 
 Optional extras:
 
 ```bash
-pip install -e ".[langgraph]"   # LangGraph adapter
-pip install -e ".[dev]"         # pytest, for running the test suite
+uv sync --extra langgraph        # LangGraph adapter
+uv run pytest                    # run the test suite (no activation needed)
 ```
+
+> Prefer plain pip? `pip install -e ".[langgraph]"` still works — uv just adds a
+> committed `uv.lock` for reproducible installs.
 
 ---
 
@@ -243,24 +249,27 @@ Every new design operation that didn't exist before is synthesized, persisted to
 
 ---
 
-App deps (once, from the repo root):
+The library itself only needs `uv sync`. The demo apps need a few extra
+runtime libs (FastAPI, RAG embeddings, plotting) — install them into the venv
+once, from the repo root:
 
 ```bash
-pip install fastapi "uvicorn[standard]" pandas python-multipart matplotlib \
-            sentence-transformers networkx
-pip install -e ".[langgraph]"
+uv pip install fastapi "uvicorn[standard]" pandas numpy matplotlib \
+               sentence-transformers requests python-multipart
+uv sync --extra langgraph        # LangGraph adapter for AlgoViz
 ```
 
-> Launch backends with `../../.venv/bin/python -m uvicorn …`, not a bare
-> `uvicorn`, so they use the venv's interpreter and dependencies.
+> Launch backends with `../../../.venv/bin/python -m uvicorn …`, not a bare
+> `uvicorn`, so they use the venv's interpreter and dependencies. The
+> `examples/Makefile` (`make dev`, `make pitch`, …) already does this for you.
 
 ---
 
 ## Testing
 
 ```bash
-pip install -e ".[dev]"   # from the repo root
-pytest -q
+uv sync            # dev group (pytest) is installed by default
+uv run pytest -q
 ```
 
 The suite in [`tests/`](tests/) runs **without any network/LLM calls** (a
