@@ -8,24 +8,58 @@ You register Python functions as capabilities and submit natural-language goals.
 
 ## Install
 
-This project is managed with [uv](https://docs.astral.sh/uv/). Install uv once
-(`curl -LsSf https://astral.sh/uv/install.sh | sh`), then:
+CSP isn't on PyPI yet — install it straight from GitHub into your own project.
+
+**With [uv](https://docs.astral.sh/uv/) (recommended):**
 
 ```bash
-git clone https://github.com/ldbtech/capability-synthesis-protocol
-cd csp
-uv sync                          # core lib + dev tools, into .venv
+# add it as a dependency of your project (writes to pyproject.toml + uv.lock)
+uv add "git+https://github.com/ldbtech/capability-synthesis-protocol"
+
+# …or install into the active environment
+uv pip install "git+https://github.com/ldbtech/capability-synthesis-protocol"
 ```
 
-Optional extras:
+**With pip:**
 
 ```bash
-uv sync --extra langgraph        # LangGraph adapter
-uv run pytest                    # run the test suite (no activation needed)
+pip install "git+https://github.com/ldbtech/capability-synthesis-protocol"
 ```
 
-> Prefer plain pip? `pip install -e ".[langgraph]"` still works — uv just adds a
-> committed `uv.lock` for reproducible installs.
+**Optional LangGraph adapter** — add the `langgraph` extra:
+
+```bash
+uv add "csp-sdk[langgraph] @ git+https://github.com/ldbtech/capability-synthesis-protocol"
+# pip: pip install "csp-sdk[langgraph] @ git+https://github.com/ldbtech/capability-synthesis-protocol"
+```
+
+The package imports as `csp`. Set your key once and you're ready:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+> **Pin a version** for reproducibility by appending a tag/commit, e.g.
+> `…capability-synthesis-protocol@v0.1b0`.
+
+---
+
+## Features at a glance
+
+| Feature | What you get | Where |
+|---|---|---|
+| **Register capabilities** | Decorate async Python fns as named, typed verbs | `@app.capability(...)` |
+| **Runtime synthesis** | No capability for a goal? The LLM writes real `def run(args)`, sandboxed | automatic |
+| **Persist & reuse** | Synthesized code is saved to `planner/` and reloaded — generated at most once | `planner_dir` |
+| **Plan from natural language** | Submit a goal; CSP plans which capabilities to run | `submit` / `run_goal` |
+| **Streaming** | Live event stream for UIs / SSE | `app.submit(...)` |
+| **One-shot** | Headless final result for scripts | `app.run_goal(...)` |
+| **Direct call** | Invoke one capability, skip the planner | `app.call_capability(...)` |
+| **Borrowing** | Rust-style shared, read-only handle to an existing capability | `app.borrow(...)` |
+| **Human-in-the-loop** | Pause a capability to ask the user (approval, input) | `ElicitRequired` |
+| **MCP-style server** | stdio JSON-RPC host, same transport as MCP | `app.run()` |
+| **LangGraph adapter** | Drop CSP into a graph as a node or tool | `csp.adapters.langgraph` |
+| **Bring your own LLM** | Swap Anthropic for any provider | `csp.llm.BaseLLM` |
 
 ---
 
@@ -60,6 +94,40 @@ if __name__ == "__main__":
 ```bash
 ANTHROPIC_API_KEY=sk-ant-... python server.py
 ```
+
+### Use it inside your own code
+
+You don't need the stdio server — embed the `Orchestrator` directly and drive it
+with `run_goal` (one-shot) or `submit` (streaming). This is where synthesis
+shines: a goal with **no matching capability** makes CSP write the code for it.
+
+```python
+import asyncio
+from csp import Orchestrator, AnthropicLLM
+
+app = Orchestrator("analyst", llm=AnthropicLLM())
+
+async def main():
+    rows = [{"dept": "Eng", "salary": 120}, {"dept": "Eng", "salary": 100},
+            {"dept": "Sales", "salary": 90}]
+
+    # No capability does this — CSP synthesizes one, runs it in a sandbox,
+    # and persists it to planner/ so the next call reuses it (no LLM).
+    result = await app.run_goal(
+        "average salary by department",
+        ambient={"rows": rows},          # merged into the synthesized code's args
+    )
+    print(result)
+
+    # Streaming variant — get live planning/synthesis/result events:
+    async for event in app.submit("count rows per department", ambient={"rows": rows}):
+        print(event["type"], event.get("message", ""))
+
+asyncio.run(main())
+```
+
+`ambient` is any dict (your rows, columns, config) merged into every step's
+args, so generated code can compute over your real data.
 
 ---
 
@@ -152,7 +220,7 @@ domain-specific.
 ## Use it inside LangGraph
 
 ```bash
-pip install -e ".[langgraph]"
+uv add "csp-sdk[langgraph] @ git+https://github.com/ldbtech/capability-synthesis-protocol"
 ```
 
 ```python
