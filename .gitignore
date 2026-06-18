@@ -11,6 +11,10 @@ build/
 .eggs/
 *.whl
 
+# Demo apps & local scratch — this repo ships the pure csp library only.
+examples/
+credentials/
+
 # Node (demo app frontends)
 node_modules/
 

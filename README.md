@@ -175,93 +175,16 @@ graph = build_csp_graph(app)
 
 Adapters import their framework lazily — a plain `csp-sdk` install never pulls in
 LangGraph. Other frameworks plug in the same way under [`csp/adapters/`](csp/adapters/).
-Runnable example: [`examples/langgraph_integration.py`](examples/langgraph_integration.py).
 
 ---
 
 ## Demo apps
 
-All demo apps live under [`examples/`](examples/), each with its own backend +
-frontend. They run on **different ports**, so several can be up at once. The
-simplest way to launch them is the bundled Makefile:
-
-```bash
-cd examples
-make install          # one-time: npm install for every frontend
-make dev              # run csv-rag + algoviz + montage + pitch (Ctrl-C stops all)
-make csv-rag          # …or just one app
-```
-
-| App | Folder | Shows | Backend | Frontend |
-|---|---|---|---|---|
-| **CSV-RAG** | [`examples/helloworld/`](examples/helloworld/) | RAG for lookups + synthesized code for analysis/plots | :8000 | :5173 |
-| **AlgoViz** | [`examples/algoviz/`](examples/algoviz/) | CSP **inside LangGraph**; invents an algorithm visualizer live | :8001 | :5174 |
-| **Montage AI** | [`examples/montage-ai/`](examples/montage-ai/) | Figma-style canvas that **synthesizes its own design capabilities** | :8002 | :5175 |
-| **Pitch** | [`examples/pitch/`](examples/pitch/) | Live World Cup copilot — fetches real data + synthesizes predictions | :8003 | :5176 |
-
-### CSV-RAG — ask anything about a CSV
-
-```bash
-cd examples && make csv-rag        # → http://localhost:5173
-# or manually:
-cd examples/helloworld/backend && ../../../.venv/bin/python -m uvicorn app:api --reload --port 8000
-cd examples/helloworld/frontend && npm install && npm run dev          # http://localhost:5173
-```
-
-Upload `examples/helloworld/sample_data/employees.csv`, then try:
-
-- **Lookup (RAG):** `Who works in Engineering?` · `Find the most experienced person in Seattle`
-- **Computed (synthesized):** `Average salary by department` · `Correlation between age and salary` · `Top 5 highest-paid employees` · `What percent earn above the median?`
-- **Plots (synthesized matplotlib):** `Plot a histogram of salaries` · `Bar chart of average salary by department` · `Scatter of age vs salary`
-
-### AlgoViz — self-building algorithm visualizer (CSP + LangGraph)
-
-```bash
-cd examples && make algoviz        # → http://localhost:5174
-# or manually:
-cd examples/algoviz/backend && ../../../.venv/bin/python -m uvicorn app:api --reload --port 8001
-cd examples/algoviz/frontend && npm install && npm run dev             # http://localhost:5174
-```
-
-Type an algorithm — there's no code for it, so CSP writes the visualizer live
-and runs it as a node in a LangGraph workflow (`understand → build → narrate`):
-
-- **Sorts/searches:** `visualize quicksort` · `merge sort` · `insertion sort` · `animate binary search`
-- **Graphs:** `show BFS on a graph` · `Dijkstra shortest path`
-- **Novel:** `visualize the sieve of Eratosthenes` · `animate the Tower of Hanoi`
-
-### Montage AI — self-evolving design canvas
-
-```bash
-cd examples && make montage        # → http://localhost:5175
-# or manually:
-cd examples/montage-ai/backend && ../../../.venv/bin/python -m uvicorn app:app --reload --port 8002
-cd examples/montage-ai/frontend && npm install && npm run dev          # http://localhost:5175
-```
-
-Type design requests in natural language — CSP synthesizes the layout capability live and renders it on the SVG canvas:
-
-- **Layouts:** `Create a mobile app login screen` · `Make a 3-column pricing card layout`
-- **Components:** `Add a navigation bar at the top` · `Create a dashboard with stats cards`
-- **Creative:** `Draw a pie chart with 4 segments` · `Make a timeline with 4 steps`
-
-Every new design operation that didn't exist before is synthesized, persisted to `planner/`, and reused on future runs.
-
----
-
-The library itself only needs `uv sync`. The demo apps need a few extra
-runtime libs (FastAPI, RAG embeddings, plotting) — install them into the venv
-once, from the repo root:
-
-```bash
-uv pip install fastapi "uvicorn[standard]" pandas numpy matplotlib \
-               sentence-transformers requests python-multipart
-uv sync --extra langgraph        # LangGraph adapter for AlgoViz
-```
-
-> Launch backends with `../../../.venv/bin/python -m uvicorn …`, not a bare
-> `uvicorn`, so they use the venv's interpreter and dependencies. The
-> `examples/Makefile` (`make dev`, `make pitch`, …) already does this for you.
+This repository ships the **pure `csp` library** only. Full example apps that
+build on it — a CSV-RAG analyst, a self-building algorithm visualizer (CSP
+inside LangGraph), a self-evolving design canvas, and a live sports copilot —
+are kept out of the package so installs stay lean. They live separately and are
+not required to use the library.
 
 ---
 
@@ -324,10 +247,8 @@ csp/
 │   ├── adapters/
 │   │   └── langgraph.py       # csp_node / csp_tool / build_csp_graph
 │   └── client/types.py        # StreamEvent, ElicitRequest, Result, …
-├── helloworld/                # CSV-RAG demo  (:8000 / :5173)
-├── algoviz/                   # AlgoViz demo  (:8001 / :5174)
-├── examples/                  # langgraph_integration.py
 ├── tests/                     # network-free pytest suite
+├── uv.lock                    # pinned, reproducible installs
 ├── pyproject.toml
 └── LICENSE
 ```
