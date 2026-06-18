@@ -107,9 +107,15 @@ Omit the ##CREDENTIALS block entirely if no credentials are needed.
   "result_schema": {
     "<field>": {"type": "<type>", "description": "<...>"}
   },
+  "tags": ["<3-6 lowercase keywords describing what this capability DOES>"],
   "steps": ["<short progress line 1>", "<short progress line 2>"]
 }
 ```
+
+`tags` are how this capability gets found later: include the function/category
+words a future goal might use (e.g. for a group-by table:
+["aggregation","group-by","statistics","table"]). Think synonyms, not just the
+exact name — this is paid once, here, so selection stays cheap forever.
 
 Putting the code in its own block (not inside JSON) avoids escaping bugs.
 """
@@ -328,6 +334,9 @@ def _assemble_spec(raw: str, capability_name: str) -> tuple[dict[str, Any], list
             "version": "1.0.0",
             "description": meta.get("description", ""),
             "kind": "synthesized",
+            # Semantic tags the LLM attached — consumed by SelectionStrategy to
+            # shortlist this capability for future goals (see selection.py).
+            "tags": meta.get("tags", []),
             "params_schema": meta.get("params_schema", {}),
             "result_schema": meta.get("result_schema", {}),
             "execution": {

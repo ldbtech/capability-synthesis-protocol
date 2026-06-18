@@ -11,12 +11,14 @@ Resolution order (always):
 
 Design:
 - Two separate dicts for O(1) lookup by name
-- Synthesized capabilities also indexed by semantic tags for fuzzy
-  matching (planner may use slightly different names)
 - Thread-safe via asyncio.Lock — registry is mutated at runtime when
   new capabilities are synthesized
 - list_all() returns a snapshot for the planner to reason about what
   already exists before deciding to synthesize
+- summary_for_planner(goal) does NOT always dump every capability: past a
+  threshold it asks the SelectionStrategy to shortlist the top-k relevant
+  ones for the goal, so the planner prompt stays small as the registry grows
+  (see csp.orchestrator.selection).
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from .capability import (
     RegisteredCapability,
     SynthesizedCapability,
 )
+from .selection import SelectionStrategy, TagLexicalStrategy
 
 log = logging.getLogger("csp.registry")
 
@@ -46,9 +49,18 @@ class CapabilityRegistry:
         cap = await registry.resolve("predict_churn")
     """
 
-    __slots__ = ("_registered", "_synthesized", "_lock", "persist_hook", "_borrows")
+    __slots__ = (
+        "_registered", "_synthesized", "_lock", "persist_hook", "_borrows",
+        "_strategy", "_shortlist_k", "_shortlist_threshold",
+    )
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        strategy: Optional[SelectionStrategy] = None,
+        shortlist_k: int = 12,
+        shortlist_threshold: int = 25,
+    ) -> None:
         self._registered:  dict[str, RegisteredCapability]  = {}
         self._synthesized: dict[str, SynthesizedCapability] = {}
         self._lock = asyncio.Lock()
@@ -57,6 +69,14 @@ class CapabilityRegistry:
         # Optional callback invoked when a capability is synthesized at runtime.
         # The orchestrator sets this to persist specs into planner/capabilities/.
         self.persist_hook: Optional[Callable[[SynthesizedCapability], None]] = None
+
+        # Selection: how the planner's candidate set is chosen. Defaults to the
+        # dependency-free lexical strategy. Below `shortlist_threshold` total
+        # capabilities we just show them all (enumeration is cheap and gives the
+        # planner full context); above it we shortlist the top `shortlist_k`.
+        self._strategy = strategy or TagLexicalStrategy()
+        self._shortlist_k = shortlist_k
+        self._shortlist_threshold = shortlist_threshold
 
     # ------------------------------------------------------------------
     # Registration (called at startup by @app.capability decorator)
@@ -194,19 +214,38 @@ class CapabilityRegistry:
             synth = list(self._synthesized.values())
         return list(self._registered.values()) + synth
 
-    async def summary_for_planner(self) -> str:
+    async def summary_for_planner(self, goal: Optional[str] = None) -> str:
         """
-        Human-readable capability list for injecting into planner prompt.
-        Registered capabilities include their param schemas.
-        Synthesized capabilities include their description.
+        Human-readable capability list for injecting into the planner prompt.
+        Registered capabilities include their param schemas; synthesized ones
+        include their description.
+
+        When the registry holds more than `shortlist_threshold` capabilities AND
+        a goal is provided, the SelectionStrategy narrows the list to the top-k
+        most relevant ones — so the prompt size stays bounded as the registry
+        grows. Below the threshold (or with no goal) every capability is shown.
         """
-        lines = []
         all_caps = await self.list_all()
 
         if not all_caps:
             return "No capabilities registered yet."
 
-        for cap in all_caps:
+        caps = all_caps
+        shortlisted = False
+        if goal and len(all_caps) > self._shortlist_threshold:
+            caps = self._strategy.shortlist(goal, all_caps, self._shortlist_k)
+            shortlisted = True
+
+        lines = []
+        if shortlisted:
+            # Tell the planner this is a relevant subset, not the whole world —
+            # so "I don't see a fit, synthesize" stays a safe decision.
+            lines.append(
+                f"# showing {len(caps)} of {len(all_caps)} capabilities most "
+                f"relevant to this goal (selected by relevance):"
+            )
+
+        for cap in caps:
             kind_label = "registered" if cap.kind == CapabilityKind.REGISTERED else "synthesized"
             if isinstance(cap, RegisteredCapability):
                 params = ", ".join(

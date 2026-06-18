@@ -181,7 +181,9 @@ class Planner:
 
         Marks steps as needs_synthesis if the capability isn't in registry.
         """
-        capabilities_summary = await self._registry.summary_for_planner()
+        # Pass the goal so the registry can shortlist relevant capabilities
+        # instead of dumping the whole (possibly huge) registry into the prompt.
+        capabilities_summary = await self._registry.summary_for_planner(goal)
         prompt = _build_prompt(goal, capabilities_summary)
 
         raw_plan = await self._generate_plan(prompt, goal)

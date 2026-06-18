@@ -45,6 +45,7 @@ from .executor import Executor
 from .planner import Planner
 from .planner_store import PlannerStore
 from .registry import CapabilityRegistry
+from .selection import SelectionStrategy, TagLexicalStrategy, EmbeddingStrategy
 from .sandbox import PythonSandbox
 from .synthesizer import Synthesizer
 
@@ -86,6 +87,9 @@ class Orchestrator:
         credentials_dir: Optional[str] = "credentials",
         synthesis_guidance: str = "",
         sandbox_env: Optional[dict[str, str]] = None,
+        selection: Optional["SelectionStrategy"] = None,
+        shortlist_k: int = 12,
+        shortlist_threshold: int = 25,
     ) -> None:
         self._name                = name
         self._version             = version
@@ -99,7 +103,16 @@ class Orchestrator:
             PlannerStore(planner_dir) if planner_dir else None
         )
 
-        self._registry    = CapabilityRegistry()
+        # Selection strategy decides which capabilities the planner sees per
+        # goal. Defaults (selection=None) to the dependency-free lexical
+        # strategy inside CapabilityRegistry; pass EmbeddingStrategy(...) to opt
+        # into semantic retrieval. shortlist_threshold gates when shortlisting
+        # kicks in — below it, all capabilities are shown.
+        self._registry    = CapabilityRegistry(
+            strategy=selection,
+            shortlist_k=shortlist_k,
+            shortlist_threshold=shortlist_threshold,
+        )
         self._synthesizer = Synthesizer(llm, guidance=synthesis_guidance)
         self._planner     = Planner(llm, self._registry)
         self._sandbox     = PythonSandbox(env=sandbox_env)

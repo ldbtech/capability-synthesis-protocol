@@ -26,6 +26,11 @@ from .orchestrator.server import Orchestrator
 from .orchestrator.executor import ElicitRequired
 from .orchestrator.borrow import BorrowError, BorrowedCapability
 from .orchestrator.credentials import CredentialRequired, CredentialStore
+from .orchestrator.selection import (
+    SelectionStrategy,
+    TagLexicalStrategy,
+    EmbeddingStrategy,
+)
 from .llm.anthropic import AnthropicLLM
 from .llm.base import BaseLLM, LLMMessage, LLMResponse
 
@@ -36,6 +41,9 @@ __all__ = [
     "BorrowedCapability",
     "CredentialRequired",
     "CredentialStore",
+    "SelectionStrategy",
+    "TagLexicalStrategy",
+    "EmbeddingStrategy",
     "AnthropicLLM",
     "BaseLLM",
     "LLMMessage",

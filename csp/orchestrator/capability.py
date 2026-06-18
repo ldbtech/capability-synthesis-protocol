@@ -79,6 +79,10 @@ class RegisteredCapability:
     version:     str                          = "1.0.0"
     kind:        CapabilityKind               = CapabilityKind.REGISTERED
     registered_at: float                      = field(default_factory=time.time)
+    # Free-form semantic tags used by SelectionStrategy to shortlist this
+    # capability for a goal (e.g. ["aggregation", "group-by"]). Optional —
+    # lexical routing falls back to name + description when empty.
+    tags:        list[str]                    = field(default_factory=list)
 
     def to_jsonrpc_spec(self) -> dict[str, Any]:
         """Serialize to JSON-RPC 2.0 capability spec for wire/storage."""
@@ -175,6 +179,16 @@ class SynthesizedCapability:
     @property
     def params_schema(self) -> dict[str, Any]:
         return self.spec.get("params", {}).get("params_schema", {})
+
+    @property
+    def tags(self) -> list[str]:
+        """
+        Semantic tags the synthesizer attached to this capability (read from
+        the spec). Used by SelectionStrategy to route goals to it without
+        re-reading the whole registry. Falls back to [] for older specs.
+        """
+        params = self.spec.get("params", {})
+        return params.get("tags", self.spec.get("tags", []))
 
     @property
     def result_schema(self) -> dict[str, Any]:

@@ -51,6 +51,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 | **Register capabilities** | Decorate async Python fns as named, typed verbs | `@app.capability(...)` |
 | **Runtime synthesis** | No capability for a goal? The LLM writes real `def run(args)`, sandboxed | automatic |
 | **Persist & reuse** | Synthesized code is saved to `planner/` and reloaded — generated at most once | `planner_dir` |
+| **Scalable selection** | Shortlist only the relevant capabilities per goal — beats tool bloat | `selection=` |
 | **Plan from natural language** | Submit a goal; CSP plans which capabilities to run | `submit` / `run_goal` |
 | **Streaming** | Live event stream for UIs / SSE | `app.submit(...)` |
 | **One-shot** | Headless final result for scripts | `app.run_goal(...)` |
@@ -208,12 +209,58 @@ Orchestrator(
     sandbox_env={"MPLBACKEND": "Agg"},  # extra env for the sandbox subprocess
     synthesis_timeout=30.0,
     elicitation_timeout=120.0,
+    selection=None,                 # capability selection strategy (see below)
+    shortlist_threshold=25,         # show all capabilities below this count
+    shortlist_k=12,                 # how many to shortlist above it
 )
 ```
 
 `synthesis_guidance` is how an **app** teaches CSP its domain (data shapes,
 output formats like "plots → base64 PNG") without the library knowing anything
 domain-specific.
+
+---
+
+## Scaling capability selection (solving tool bloat)
+
+MCP's pain at scale is **tool bloat**: every tool is dumped into the model's
+context, so past a few hundred the model can't reliably pick — and you pay for
+all of them on every call. CSP avoids this. Instead of advertising the whole
+registry, it **shortlists the top‑k capabilities relevant to the goal** and only
+those reach the planner. Selection cost stays ~constant as the registry grows.
+
+You pick *how* to shortlist with a `SelectionStrategy`. Two ship, and they're
+fully interchangeable:
+
+| Strategy | Cost | When |
+|---|---|---|
+| `TagLexicalStrategy` **(default)** | pure Python, **zero deps, no model, no infra** | startups, most apps |
+| `EmbeddingStrategy` (opt‑in) | needs an embedding function + a little compute | large registries, max recall |
+
+```python
+from csp import Orchestrator, AnthropicLLM, TagLexicalStrategy, EmbeddingStrategy
+
+# Default — nothing to configure. BM25 over each capability's name + description
+# + the tags the synthesizer attaches at creation time. Lexical routing at query
+# time, so there's no per-request model call and nothing extra to install.
+app = Orchestrator("my-app", llm=AnthropicLLM())          # uses TagLexicalStrategy
+
+# Opt-in — semantic vector retrieval. You supply the embedding function (your
+# own model or a provider endpoint); CSP stays dependency-pure and caches the
+# vector per capability.
+def embed(texts):                  # (list[str]) -> list[list[float]]
+    ...
+app = Orchestrator("my-app", llm=AnthropicLLM(), selection=EmbeddingStrategy(embed))
+```
+
+Below `shortlist_threshold` total capabilities, CSP just shows them all
+(enumeration is cheap and gives the planner full context). Above it, the
+strategy narrows the prompt to `shortlist_k` candidates. The key idea: the
+**semantic work is front-loaded to synthesis time** — the synthesizer tags each
+capability when it writes it (free, the LLM call already happens) — so query
+time stays cheap. Subclass `SelectionStrategy` and implement
+`shortlist(goal, caps, k)` to plug in your own router (a vector DB, a reranker,
+hierarchical categories…).
 
 ---
 
@@ -309,6 +356,7 @@ csp/
 │   │   ├── sandbox.py         # PythonSandbox — runs generated code in a subprocess
 │   │   ├── executor.py        # runs the plan; ElicitRequired
 │   │   ├── registry.py        # capability registry (+ forget, persistence hook)
+│   │   ├── selection.py       # SelectionStrategy: TagLexical (default) + Embedding
 │   │   ├── capability.py      # Registered / Synthesized capabilities
 │   │   ├── planner_store.py   # planner/ folder: JSON-RPC log, specs, plans
 │   │   └── elicitation.py     # human-in-the-loop
