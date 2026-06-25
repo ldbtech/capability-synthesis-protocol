@@ -37,6 +37,12 @@ from .capability import (
 from .elicitation import ElicitationManager, ElicitationRequest
 from .planner import ExecutionPlan, PlanStep
 from .registry import CapabilityRegistry
+from .repair import (
+    Hole,
+    classify_error,
+    regrowth_context,
+    repair_instruction,
+)
 from .sandbox import PythonSandbox
 from .synthesizer import Synthesizer
 
@@ -88,7 +94,10 @@ class Executor:
         Original user goal — passed to synthesizer for context.
     """
 
-    __slots__ = ("_registry", "_synthesizer", "_elicitation", "_goal", "_sandbox")
+    __slots__ = (
+        "_registry", "_synthesizer", "_elicitation", "_goal", "_sandbox",
+        "_max_repair", "_collision_limit", "_max_regrowths",
+    )
 
     def __init__(
         self,
@@ -97,12 +106,24 @@ class Executor:
         elicitation_manager: ElicitationManager,
         goal: str,
         sandbox: Optional[PythonSandbox] = None,
+        *,
+        max_repair_attempts: int = 3,
+        repair_collision_limit: int = 2,
+        max_regrowths: int = 1,
     ) -> None:
         self._registry     = registry
         self._synthesizer  = synthesizer
         self._elicitation  = elicitation_manager
         self._goal         = goal
         self._sandbox      = sandbox or PythonSandbox()
+        # Pac-Man self-repair budget (see csp.orchestrator.repair):
+        #   _max_repair      — M, total heal attempts before giving up
+        #   _collision_limit — C, same-hole hits that trigger a warp (regrow)
+        #   _max_regrowths   — R, from-scratch regenerations allowed
+        # Termination: O(H·C·(R+1)) LLM calls, bounded by M.
+        self._max_repair      = max_repair_attempts
+        self._collision_limit = repair_collision_limit
+        self._max_regrowths   = max_regrowths
 
     async def execute(
         self,
@@ -122,6 +143,12 @@ class Executor:
 
         for step in plan.steps:
             async for event in self._execute_step(step, all_outputs):
+                # Record any step that ended in failure (after self-repair has
+                # had its chance) so the terminal result reflects it — without
+                # this, a failed step still reported status OK.
+                p = event.get("params", {})
+                if p.get("kind") == "CAPABILITY_END" and not p.get("metadata", {}).get("success", True):
+                    errors.append(p["metadata"].get("error") or f"{step.capability} failed")
                 yield event
 
         # Final result
@@ -192,11 +219,17 @@ class Executor:
                     return
 
                 yield _event("LOG", "Running generated code in sandbox...", cap.name)
-                sb = await self._sandbox.run(
-                    cap.code, step.args, entrypoint=cap.entrypoint,
-                )
+                # Run the code; if it fails at runtime, the Pac-Man regeneration
+                # loop heals it in place (classify → DNA-repair / warp+regrow)
+                # before we ever report failure. holder carries the outcome out
+                # of the async generator (PEP 525: async gens can't return one).
+                holder: dict[str, Any] = {}
+                async for ev in self._heal(cap, step, holder):
+                    yield ev
+                sb  = holder["sb"]
+                cap = holder["cap"]          # possibly the healed/regrown version
                 if not sb.ok:
-                    yield _event("LOG", f"Code error: {sb.error}", cap.name)
+                    yield _event("LOG", f"Code error (unhealed): {sb.error}", cap.name)
                     yield _capability_end(step.capability, success=False, error=sb.error)
                     return
                 output = sb.result if isinstance(sb.result, dict) else {"result": sb.result}
@@ -253,6 +286,95 @@ class Executor:
         for exec_step in cap.steps:
             yield _event("LOG", exec_step, cap.name)
             await asyncio.sleep(_STEP_DELAY)
+
+    # ------------------------------------------------------------------
+    # Pac-Man self-repair — heal a synthesized capability that runs but fails
+    # ------------------------------------------------------------------
+
+    async def _heal(
+        self,
+        cap: SynthesizedCapability,
+        step: PlanStep,
+        holder: dict[str, Any],
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Run a synthesized capability's code; if it fails at runtime, heal it.
+
+        The Pac-Man regeneration loop (see csp.orchestrator.repair):
+          1. classify the traceback into a pigeonhole (error class)
+          2. record it on the scent trail; count collisions per hole
+          3. same hole hit C times  → WARP: apoptosis + regrow (synthesize fresh)
+             otherwise               → DNA repair: evolve() the code in place
+          4. re-run; on green, persist the healed code and stop
+          5. bounded by M attempts / R regrowths → provably terminates
+
+        Only GREEN code is written back to the registry, so a capability that
+        has never executed successfully is never cached for reuse.
+
+        Streams a LOG per move; writes the final {sb, cap} into `holder`.
+        """
+        sb = await self._sandbox.run(cap.code, step.args, entrypoint=cap.entrypoint)
+        if sb.ok:
+            holder["sb"], holder["cap"] = sb, cap
+            return
+
+        trail: list[tuple[Hole, Optional[str]]] = []
+        collisions: dict[Hole, int] = {}
+        regrowths = 0
+
+        for attempt in range(1, self._max_repair + 1):
+            hole = classify_error(sb.error, sb.traceback)
+
+            # A missing credential is not a code bug — let the credential gate
+            # handle it. Bail out of repair with the original failure intact.
+            if hole is Hole.CREDENTIAL:
+                yield _event("LOG", f"⛔ repair skipped: {cap.name} needs a credential, not a fix", cap.name)
+                break
+
+            trail.append((hole, sb.error))
+            collisions[hole] = collisions.get(hole, 0) + 1
+
+            warp = collisions[hole] >= self._collision_limit and regrowths < self._max_regrowths
+            if warp:
+                regrowths += 1
+                collisions.clear()           # fresh maze after a warp
+                yield _event(
+                    "LOG",
+                    f"🔵 warp {regrowths}/{self._max_regrowths}: regrowing {cap.name} "
+                    f"from scratch (hole={hole.value} cornered)",
+                    cap.name,
+                )
+                candidate = await self._synthesizer.synthesize(
+                    capability_name=cap.name,
+                    goal=self._goal,
+                    context=regrowth_context(step.args, trail),
+                )
+            else:
+                yield _event(
+                    "LOG",
+                    f"🟡 repair {attempt}/{self._max_repair}: hole={hole.value}",
+                    cap.name,
+                )
+                candidate = await self._synthesizer.evolve(
+                    cap,
+                    repair_instruction(hole, sb.error, sb.traceback, step.args, trail),
+                )
+
+            sb  = await self._sandbox.run(candidate.code, step.args, entrypoint=candidate.entrypoint)
+            cap = candidate                  # carry forward; next patch builds on this
+
+            if sb.ok:
+                await self._registry.store_synthesized(cap)   # persist only green code
+                yield _event(
+                    "LOG",
+                    f"🟢 healed {cap.name} after {attempt} attempt(s)",
+                    cap.name,
+                    metadata={"repair_attempts": attempt, "regrowths": regrowths},
+                )
+                holder["sb"], holder["cap"] = sb, cap
+                return
+
+        # Budget exhausted (or credential bail-out): hand back the last failure.
+        holder["sb"], holder["cap"] = sb, cap
 
     # ------------------------------------------------------------------
     # Elicitation handling

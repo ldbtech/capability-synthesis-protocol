@@ -90,12 +90,20 @@ class Orchestrator:
         selection: Optional["SelectionStrategy"] = None,
         shortlist_k: int = 12,
         shortlist_threshold: int = 25,
+        max_repair_attempts: int = 3,
+        repair_collision_limit: int = 2,
+        max_regrowths: int = 1,
     ) -> None:
         self._name                = name
         self._version             = version
         self._llm                 = llm
         self._synthesis_timeout   = synthesis_timeout
         self._elicitation_timeout = elicitation_timeout
+        # Pac-Man self-repair budget — threaded into every Executor. See
+        # csp.orchestrator.repair for the algorithm and termination bound.
+        self._max_repair_attempts    = max_repair_attempts
+        self._repair_collision_limit = repair_collision_limit
+        self._max_regrowths          = max_regrowths
 
         # Planner store — auto-creates planner/ in the developer's project.
         # Pass planner_dir=None to disable persistence entirely.
@@ -285,6 +293,9 @@ class Orchestrator:
                 elicitation_manager=elicit_mgr,
                 goal=goal,
                 sandbox=self._sandbox,
+                max_repair_attempts=self._max_repair_attempts,
+                repair_collision_limit=self._repair_collision_limit,
+                max_regrowths=self._max_regrowths,
             )
 
             # Inject all stored credentials into the sandbox env so synthesized
@@ -665,6 +676,9 @@ class Orchestrator:
                 elicitation_manager=elicit_mgr,
                 goal=goal,
                 sandbox=self._sandbox,
+                max_repair_attempts=self._max_repair_attempts,
+                repair_collision_limit=self._repair_collision_limit,
+                max_regrowths=self._max_regrowths,
             )
 
             result_payload: dict[str, Any] = {}
